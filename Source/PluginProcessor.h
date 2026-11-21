@@ -1,3 +1,5 @@
+// Fichier: Source/PluginProcessor.h
+
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -73,13 +75,12 @@ public:
         return liveInputPeak.load (std::memory_order_relaxed);
     }
 
-    // Presets & A/B Comparator (Message Thread only)
     static juce::StringArray getFactoryPresetNames();
     static juce::File getUserPresetsDirectory();
     static juce::Array<juce::File> scanUserPresetFiles();
 
     void loadFactoryPreset (int presetIndex);
-    bool saveUserPresetToFile (const juce::File& file) const;
+    bool saveUserPresetToFile (const juce::File& file);
     bool loadUserPresetFromFile (const juce::File& file);
 
     int getActiveABSlot() const noexcept { return activeABSlot; }
@@ -90,7 +91,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static const std::array<const char*, numPerModeParams>& getPerModeParamIds() noexcept;
 
-    std::unique_ptr<juce::XmlElement> createStateXml() const;
+    std::unique_ptr<juce::XmlElement> createStateXml();
     void applyStateXml (const juce::XmlElement& xmlState);
 
     void parameterChanged (const juce::String& parameterID, float newValue) override;
