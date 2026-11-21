@@ -1,3 +1,5 @@
+// Fichier: Source/PluginProcessor.cpp
+
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -11,10 +13,6 @@ struct FactoryPresetData
     std::array<float, RunawayAudioProcessor::numPerModeParams> perMode;
 };
 
-// Order matches getPerModeParamIds():
-// preCutoff, drive, character, loopEngine, loopActive, loopLevel(inLoopLvl),
-// pitch, feedback, loopCutoff, spread, polarity, inLoop, output,
-// envTarget, envAmount, envRelease, lpgMode, lpgDecay, lpgRes
 static constexpr std::array<FactoryPresetData, RunawayAudioProcessor::numFactoryPresets> factoryPresets {{
     {
         "01  INIT / CLEAN FOLD",
@@ -184,13 +182,13 @@ void RunawayAudioProcessor::loadFactoryPreset (int presetIndex)
     isRecallingMode.store (false, std::memory_order_relaxed);
 }
 
-bool RunawayAudioProcessor::saveUserPresetToFile (const juce::File& file) const
+bool RunawayAudioProcessor::saveUserPresetToFile (const juce::File& file)
 {
     const auto parent = file.getParentDirectory();
     if (! parent.isDirectory())
         parent.createDirectory();
 
-    const auto xml = createStateXml();
+    auto xml = createStateXml();
     if (xml == nullptr)
         return false;
 
@@ -642,7 +640,7 @@ juce::AudioProcessorEditor* RunawayAudioProcessor::createEditor()
     return new RunawayAudioProcessorEditor (*this);
 }
 
-std::unique_ptr<juce::XmlElement> RunawayAudioProcessor::createStateXml() const
+std::unique_ptr<juce::XmlElement> RunawayAudioProcessor::createStateXml()
 {
     const auto state = apvts.copyState();
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
@@ -719,7 +717,7 @@ void RunawayAudioProcessor::applyStateXml (const juce::XmlElement& sourceXml)
 
 void RunawayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    const auto xml = createStateXml();
+    auto xml = createStateXml();
     copyXmlToBinary (*xml, destData);
 }
 
