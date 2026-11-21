@@ -1,5 +1,16 @@
+// Fichier: Source/PluginProcessor.cpp
+
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+
+const std::array<const char*, RunawayAudioProcessor::numPerModeParams>& RunawayAudioProcessor::getPerModeParamIds() noexcept
+{
+    static constexpr std::array<const char*, numPerModeParams> ids {
+        "preCutoff", "drive", "character", "pitch", "feedback",
+        "loopCutoff", "spread", "polarity", "inLoop", "output"
+    };
+    return ids;
+}
 
 RunawayAudioProcessor::RunawayAudioProcessor()
     : AudioProcessor (BusesProperties()
@@ -19,6 +30,112 @@ RunawayAudioProcessor::RunawayAudioProcessor()
     inLoopParam = apvts.getRawParameterValue ("inLoop");
     mixParam = apvts.getRawParameterValue ("mix");
     outputParam = apvts.getRawParameterValue ("output");
+
+    initDefaultModePresets();
+
+    apvts.addParameterListener ("mode", this);
+    for (const auto* id : getPerModeParamIds())
+        apvts.addParameterListener (id, this);
+}
+
+RunawayAudioProcessor::~RunawayAudioProcessor()
+{
+    cancelPendingUpdate();
+
+    apvts.removeParameterListener ("mode", this);
+    for (const auto* id : getPerModeParamIds())
+        apvts.removeParameterListener (id, this);
+}
+
+void RunawayAudioProcessor::initDefaultModePresets()
+{
+    static constexpr std::array<float, numPerModeParams> defaults {
+        14000.0f, // preCutoff
+        35.0f,    // drive
+        25.0f,    // character
+        110.0f,   // pitch
+        35.0f,    // feedback
+        4500.0f,  // loopCutoff
+        25.0f,    // spread
+        0.0f,     // polarity
+        0.0f,     // inLoop
+        0.0f      // output (wet level dB)
+    };
+
+    for (size_t m = 0; m < numModes; ++m)
+        for (size_t p = 0; p < numPerModeParams; ++p)
+            modePresets[m][p].store (defaults[p], std::memory_order_relaxed);
+
+    activeModeIndex.store (0, std::memory_order_relaxed);
+    pendingModeIndex.store (0, std::memory_order_relaxed);
+}
+
+void RunawayAudioProcessor::parameterChanged (const juce::String& parameterID, float newValue)
+{
+    if (isRecallingMode.load (std::memory_order_relaxed))
+        return;
+
+    if (parameterID == "mode")
+    {
+        const int nextMode = juce::jlimit (0, numModes - 1, juce::roundToInt (newValue));
+        if (nextMode == activeModeIndex.load (std::memory_order_relaxed))
+            return;
+
+        pendingModeIndex.store (nextMode, std::memory_order_relaxed);
+
+        if (auto* mm = juce::MessageManager::getInstanceWithoutCreating())
+        {
+            if (mm->isThisTheMessageThread())
+            {
+                applyModeSwitch (nextMode);
+                return;
+            }
+        }
+
+        triggerAsyncUpdate();
+        return;
+    }
+
+    const int currentMode = juce::jlimit (0, numModes - 1, activeModeIndex.load (std::memory_order_relaxed));
+    const auto& ids = getPerModeParamIds();
+
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (parameterID == ids[i])
+        {
+            modePresets[static_cast<size_t> (currentMode)][i].store (newValue, std::memory_order_relaxed);
+            break;
+        }
+    }
+}
+
+void RunawayAudioProcessor::handleAsyncUpdate()
+{
+    applyModeSwitch (pendingModeIndex.load (std::memory_order_relaxed));
+}
+
+void RunawayAudioProcessor::applyModeSwitch (int nextMode)
+{
+    const int clamped = juce::jlimit (0, numModes - 1, nextMode);
+    if (clamped == activeModeIndex.load (std::memory_order_relaxed))
+        return;
+
+    isRecallingMode.store (true, std::memory_order_relaxed);
+    activeModeIndex.store (clamped, std::memory_order_relaxed);
+
+    const auto& ids = getPerModeParamIds();
+    const auto& preset = modePresets[static_cast<size_t> (clamped)];
+
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (auto* param = apvts.getParameter (ids[i]))
+        {
+            const float val = preset[i].load (std::memory_order_relaxed);
+            param->setValueNotifyingHost (param->convertTo0to1 (val));
+        }
+    }
+
+    isRecallingMode.store (false, std::memory_order_relaxed);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::createParameterLayout()
@@ -104,7 +221,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "output", 1 },
-        "Output",
+        "Wet Level",
         juce::NormalisableRange<float> (-24.0f, 12.0f, 0.1f, 1.0f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
@@ -182,7 +299,7 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const bool invertPolarity = (polarityParam->load() >= 0.5f);
     const bool shaperInLoop = (inLoopParam->load() >= 0.5f);
     const float mixNorm = mixParam->load() * 0.01f;
-    const float outDb = outputParam->load();
+    const float wetLevelDb = outputParam->load();
 
     waveshaperEngine.setParameters (modeIdx,
                                     preCutoffHz,
@@ -195,7 +312,7 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                                     invertPolarity,
                                     shaperInLoop,
                                     mixNorm,
-                                    outDb);
+                                    wetLevelDb);
 
     const int captureSamples = std::min (numSamples, scopeDryScratch.getNumSamples());
     float* dryCapture = scopeDryScratch.getWritePointer (0);
@@ -246,6 +363,21 @@ void RunawayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     const auto state = apvts.copyState();
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
+
+    const auto& ids = getPerModeParamIds();
+    auto* banksXml = xml->createNewChildElement ("MODE_BANKS");
+    for (int m = 0; m < numModes; ++m)
+    {
+        auto* modeXml = banksXml->createNewChildElement ("MODE");
+        modeXml->setAttribute ("index", m);
+
+        for (size_t p = 0; p < ids.size(); ++p)
+        {
+            const double val = static_cast<double> (modePresets[static_cast<size_t> (m)][p].load (std::memory_order_relaxed));
+            modeXml->setAttribute (juce::Identifier (ids[p]), val);
+        }
+    }
+
     copyXmlToBinary (*xml, destData);
 }
 
@@ -253,7 +385,53 @@ void RunawayAudioProcessor::setStateInformation (const void* data, int sizeInByt
 {
     std::unique_ptr<juce::XmlElement> xmlState (getXmlFromBinary (data, sizeInBytes));
     if (xmlState != nullptr && xmlState->hasTagName (apvts.state.getType()))
+    {
+        initDefaultModePresets();
+        const auto& ids = getPerModeParamIds();
+
+        if (auto* banksXml = xmlState->getChildByName ("MODE_BANKS"))
+        {
+            for (auto* modeXml = banksXml->getFirstChildElement();
+                 modeXml != nullptr;
+                 modeXml = modeXml->getNextElement())
+            {
+                if (! modeXml->hasTagName ("MODE"))
+                    continue;
+
+                const int m = modeXml->getIntAttribute ("index", -1);
+                if (m >= 0 && m < numModes)
+                {
+                    for (size_t p = 0; p < ids.size(); ++p)
+                    {
+                        if (modeXml->hasAttribute (ids[p]))
+                        {
+                            const float fallback = modePresets[static_cast<size_t> (m)][p].load (std::memory_order_relaxed);
+                            const float val = static_cast<float> (modeXml->getDoubleAttribute (ids[p],
+                                                                                              static_cast<double> (fallback)));
+                            modePresets[static_cast<size_t> (m)][p].store (val, std::memory_order_relaxed);
+                        }
+                    }
+                }
+            }
+
+            xmlState->removeChildElement (banksXml, true);
+        }
+
+        isRecallingMode.store (true, std::memory_order_relaxed);
         apvts.replaceState (juce::ValueTree::fromXml (*xmlState));
+
+        const int loadedMode = juce::jlimit (0, numModes - 1, static_cast<int> (std::lround (modeParam->load())));
+        activeModeIndex.store (loadedMode, std::memory_order_relaxed);
+        pendingModeIndex.store (loadedMode, std::memory_order_relaxed);
+
+        for (size_t p = 0; p < ids.size(); ++p)
+        {
+            if (auto* raw = apvts.getRawParameterValue (ids[p]))
+                modePresets[static_cast<size_t> (loadedMode)][p].store (raw->load(), std::memory_order_relaxed);
+        }
+
+        isRecallingMode.store (false, std::memory_order_relaxed);
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
