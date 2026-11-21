@@ -1,1 +1,46 @@
+name: Build Runaway (macOS Universal VST3 & AU)
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake (Universal arm64 + x86_64, macOS 12.0+)
+        run: |
+          cmake -B build -G Xcode \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+
+      - name: Build VST3, AU & Standalone (Release)
+        run: |
+          cmake --build build --config Release --parallel 4
+
+      - name: Package & Ad-hoc Codesign Bundles
+        run: |
+          mkdir -p dist
+          cp -R build/Runaway_artefacts/Release/VST3/Runaway.vst3 dist/
+          cp -R build/Runaway_artefacts/Release/AU/Runaway.component dist/
+          cp -R build/Runaway_artefacts/Release/Standalone/Runaway.app dist/
+
+          codesign --force --deep --sign - dist/Runaway.vst3
+          codesign --force --deep --sign - dist/Runaway.component
+          codesign --force --deep --sign - dist/Runaway.app
+
+          lipo -info dist/Runaway.vst3/Contents/MacOS/Runaway
+          lipo -info dist/Runaway.component/Contents/MacOS/Runaway
+
+      - name: Upload Runaway macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Runaway-macOS-Universal
+          path: dist/
+          retention-days: 30
