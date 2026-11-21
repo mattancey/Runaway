@@ -92,7 +92,7 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     configureKnob (driveSlider, driveLabel, "DRIVE");
     configureKnob (characterSlider, characterLabel, "SPOIL");
     configureKnob (mixSlider, mixLabel, "MIX");
-    configureKnob (outputSlider, outputLabel, "OUTPUT");
+    configureKnob (outputSlider, outputLabel, "WET LEVEL");
 
     configureKnob (pitchSlider, pitchLabel, "RESO PITCH");
     configureKnob (feedbackSlider, feedbackLabel, "FEEDBACK");
@@ -116,7 +116,6 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     polarityAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, "polarity", polarityButton);
     loopModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, "inLoop", loopModeButton);
 
-    // Format Pitch knob as "110 Hz (A2)" for musical resonator tuning
     pitchSlider.textFromValueFunction = [] (double hz)
     {
         static constexpr std::array<const char*, 12> noteNames {
@@ -239,7 +238,6 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
     g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     g.drawText ("STAGE 2  •  4x WAVESHAPER + BBD RESONATOR LOOP", 20, 34, 340, 14, juce::Justification::centredLeft);
 
-    // Oscilloscope panel
     const auto sf = scopeBounds.toFloat();
     g.setColour (juce::Colour (0xff090b0f));
     g.fillRoundedRectangle (sf, 8.0f);
@@ -296,7 +294,6 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (lookAndFeel.getAccentColour());
     g.drawText ("RUNAWAY OUT", scopeBounds.getX() + 68, scopeBounds.getY() + 8, 100, 14, juce::Justification::left);
 
-    // Subtle resonator section container
     const auto rf = row2Bounds.toFloat();
     g.setColour (juce::Colour (0xff13161d));
     g.fillRoundedRectangle (rf, 8.0f);
@@ -328,7 +325,6 @@ void RunawayAudioProcessorEditor::resized()
     scopeBounds = area.removeFromTop (128);
     area.removeFromTop (12);
 
-    // Row 1: 5 knobs (Shaper + Master)
     auto row1 = area.removeFromTop (140);
     const int colW = area.getWidth() / 5;
 
@@ -347,10 +343,9 @@ void RunawayAudioProcessorEditor::resized()
 
     area.removeFromTop (10);
 
-    // Row 2: BBD Resonator panel (4 knobs + 2 hardware switches in column 5)
     row2Bounds = area;
     auto innerRow2 = row2Bounds.reduced (6, 8);
-    innerRow2.removeFromTop (18); // section label space
+    innerRow2.removeFromTop (18);
 
     const int col2W = innerRow2.getWidth() / 5;
     auto placeKnob2 = [&] (int index, juce::Slider& s, juce::Label& l)
