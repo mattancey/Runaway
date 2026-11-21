@@ -11,6 +11,12 @@ RunawayAudioProcessor::RunawayAudioProcessor()
     preCutoffParam = apvts.getRawParameterValue ("preCutoff");
     driveParam = apvts.getRawParameterValue ("drive");
     characterParam = apvts.getRawParameterValue ("character");
+    pitchParam = apvts.getRawParameterValue ("pitch");
+    feedbackParam = apvts.getRawParameterValue ("feedback");
+    loopCutoffParam = apvts.getRawParameterValue ("loopCutoff");
+    spreadParam = apvts.getRawParameterValue ("spread");
+    polarityParam = apvts.getRawParameterValue ("polarity");
+    inLoopParam = apvts.getRawParameterValue ("inLoop");
     mixParam = apvts.getRawParameterValue ("mix");
     outputParam = apvts.getRawParameterValue ("output");
 }
@@ -52,6 +58,44 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
         juce::AudioParameterFloatAttributes().withLabel ("%")));
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "pitch", 1 },
+        "Resonator Pitch",
+        juce::NormalisableRange<float> (35.0f, 1200.0f, 0.1f, 0.35f),
+        110.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("Hz")));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "feedback", 1 },
+        "Feedback",
+        juce::NormalisableRange<float> (0.0f, 98.0f, 0.1f, 0.85f),
+        35.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("%")));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "loopCutoff", 1 },
+        "Loop LPF",
+        juce::NormalisableRange<float> (200.0f, 16000.0f, 1.0f, 0.4f),
+        4500.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("Hz")));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "spread", 1 },
+        "Stereo Spread",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f, 1.0f),
+        25.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("%")));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "polarity", 1 },
+        "Feedback Polarity",
+        false));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "inLoop", 1 },
+        "Shaper In-Loop",
+        false));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mix", 1 },
         "Mix",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f, 1.0f),
@@ -72,7 +116,7 @@ const juce::String RunawayAudioProcessor::getName() const { return JucePlugin_Na
 bool RunawayAudioProcessor::acceptsMidi() const { return false; }
 bool RunawayAudioProcessor::producesMidi() const { return false; }
 bool RunawayAudioProcessor::isMidiEffect() const { return false; }
-double RunawayAudioProcessor::getTailLengthSeconds() const { return 0.05; }
+double RunawayAudioProcessor::getTailLengthSeconds() const { return 1.5; }
 int RunawayAudioProcessor::getNumPrograms() { return 1; }
 int RunawayAudioProcessor::getCurrentProgram() { return 0; }
 void RunawayAudioProcessor::setCurrentProgram (int) {}
@@ -131,10 +175,27 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float preCutoffHz = preCutoffParam->load();
     const float driveNorm = driveParam->load() * 0.01f;
     const float charNorm = characterParam->load() * 0.01f;
+    const float pitchHz = pitchParam->load();
+    const float feedbackNorm = feedbackParam->load() * 0.01f;
+    const float loopCutoffHz = loopCutoffParam->load();
+    const float spreadNorm = spreadParam->load() * 0.01f;
+    const bool invertPolarity = (polarityParam->load() >= 0.5f);
+    const bool shaperInLoop = (inLoopParam->load() >= 0.5f);
     const float mixNorm = mixParam->load() * 0.01f;
     const float outDb = outputParam->load();
 
-    waveshaperEngine.setParameters (modeIdx, preCutoffHz, driveNorm, charNorm, mixNorm, outDb);
+    waveshaperEngine.setParameters (modeIdx,
+                                    preCutoffHz,
+                                    driveNorm,
+                                    charNorm,
+                                    pitchHz,
+                                    feedbackNorm,
+                                    loopCutoffHz,
+                                    spreadNorm,
+                                    invertPolarity,
+                                    shaperInLoop,
+                                    mixNorm,
+                                    outDb);
 
     const int captureSamples = std::min (numSamples, scopeDryScratch.getNumSamples());
     float* dryCapture = scopeDryScratch.getWritePointer (0);
