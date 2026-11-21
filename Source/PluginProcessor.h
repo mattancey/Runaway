@@ -1,5 +1,3 @@
-// Fichier: Source/PluginProcessor.h
-
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -14,7 +12,7 @@ class RunawayAudioProcessor final : public juce::AudioProcessor,
 public:
     static constexpr int scopeBufferSize = 512;
     static constexpr int numModes = 4;
-    static constexpr int numPerModeParams = 10;
+    static constexpr int numPerModeParams = 13;
 
     RunawayAudioProcessor();
     ~RunawayAudioProcessor() override;
@@ -50,6 +48,13 @@ public:
     void readScopeData (std::array<float, scopeBufferSize>& dryOut,
                         std::array<float, scopeBufferSize>& wetOut) const noexcept;
 
+    float getActiveMidiFreqHz() const noexcept
+    {
+        return hasMidiNote.load (std::memory_order_relaxed)
+            ? midiNoteFreqHz.load (std::memory_order_relaxed)
+            : 0.0f;
+    }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static const std::array<const char*, numPerModeParams>& getPerModeParamIds() noexcept;
@@ -65,12 +70,16 @@ private:
     std::atomic<float>* preCutoffParam = nullptr;
     std::atomic<float>* driveParam = nullptr;
     std::atomic<float>* characterParam = nullptr;
+    std::atomic<float>* loopEngineParam = nullptr;
+    std::atomic<float>* loopActiveParam = nullptr;
+    std::atomic<float>* loopLevelParam = nullptr;
     std::atomic<float>* pitchParam = nullptr;
     std::atomic<float>* feedbackParam = nullptr;
     std::atomic<float>* loopCutoffParam = nullptr;
     std::atomic<float>* spreadParam = nullptr;
     std::atomic<float>* polarityParam = nullptr;
     std::atomic<float>* inLoopParam = nullptr;
+    std::atomic<float>* midiTrackParam = nullptr;
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
 
@@ -78,6 +87,9 @@ private:
     std::atomic<int> activeModeIndex { 0 };
     std::atomic<int> pendingModeIndex { 0 };
     std::atomic<bool> isRecallingMode { false };
+
+    std::atomic<float> midiNoteFreqHz { 110.0f };
+    std::atomic<bool> hasMidiNote { false };
 
     runaway::dsp::WaveshaperEngine waveshaperEngine;
 
