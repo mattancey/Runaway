@@ -6,8 +6,9 @@
 const std::array<const char*, RunawayAudioProcessor::numPerModeParams>& RunawayAudioProcessor::getPerModeParamIds() noexcept
 {
     static constexpr std::array<const char*, numPerModeParams> ids {
-        "preCutoff", "drive", "character", "pitch", "feedback",
-        "loopCutoff", "spread", "polarity", "inLoop", "output"
+        "preCutoff", "drive", "character", "loopEngine", "loopActive",
+        "loopLevel", "pitch", "feedback", "loopCutoff", "spread",
+        "polarity", "inLoop", "output"
     };
     return ids;
 }
@@ -22,12 +23,16 @@ RunawayAudioProcessor::RunawayAudioProcessor()
     preCutoffParam = apvts.getRawParameterValue ("preCutoff");
     driveParam = apvts.getRawParameterValue ("drive");
     characterParam = apvts.getRawParameterValue ("character");
+    loopEngineParam = apvts.getRawParameterValue ("loopEngine");
+    loopActiveParam = apvts.getRawParameterValue ("loopActive");
+    loopLevelParam = apvts.getRawParameterValue ("loopLevel");
     pitchParam = apvts.getRawParameterValue ("pitch");
     feedbackParam = apvts.getRawParameterValue ("feedback");
     loopCutoffParam = apvts.getRawParameterValue ("loopCutoff");
     spreadParam = apvts.getRawParameterValue ("spread");
     polarityParam = apvts.getRawParameterValue ("polarity");
     inLoopParam = apvts.getRawParameterValue ("inLoop");
+    midiTrackParam = apvts.getRawParameterValue ("midiTrack");
     mixParam = apvts.getRawParameterValue ("mix");
     outputParam = apvts.getRawParameterValue ("output");
 
@@ -53,6 +58,9 @@ void RunawayAudioProcessor::initDefaultModePresets()
         14000.0f, // preCutoff
         35.0f,    // drive
         25.0f,    // character
+        0.0f,     // loopEngine (0 = STRING)
+        1.0f,     // loopActive (1 = ON)
+        0.0f,     // loopLevel (0 dB)
         110.0f,   // pitch
         35.0f,    // feedback
         4500.0f,  // loopCutoff
@@ -174,6 +182,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
         25.0f,
         juce::AudioParameterFloatAttributes().withLabel ("%")));
 
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "loopEngine", 1 },
+        "Loop Engine",
+        juce::StringArray {
+            "STRING (Echon 6)",
+            "CHORD (Razornator)",
+            "DIFFUSE (NightSky)"
+        },
+        0));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "loopActive", 1 },
+        "Loop Active",
+        true));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "loopLevel", 1 },
+        "Loop Level",
+        juce::NormalisableRange<float> (-24.0f, 12.0f, 0.1f, 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("dB")));
+
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "pitch", 1 },
         "Resonator Pitch",
@@ -212,6 +242,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
         "Shaper In-Loop",
         false));
 
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "midiTrack", 1 },
+        "MIDI Pitch Track",
+        false));
+
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mix", 1 },
         "Mix",
@@ -230,10 +265,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
 }
 
 const juce::String RunawayAudioProcessor::getName() const { return JucePlugin_Name; }
-bool RunawayAudioProcessor::acceptsMidi() const { return false; }
+bool RunawayAudioProcessor::acceptsMidi() const { return true; }
 bool RunawayAudioProcessor::producesMidi() const { return false; }
 bool RunawayAudioProcessor::isMidiEffect() const { return false; }
-double RunawayAudioProcessor::getTailLengthSeconds() const { return 1.5; }
+double RunawayAudioProcessor::getTailLengthSeconds() const { return 2.5; }
 int RunawayAudioProcessor::getNumPrograms() { return 1; }
 int RunawayAudioProcessor::getCurrentProgram() { return 0; }
 void RunawayAudioProcessor::setCurrentProgram (int) {}
@@ -274,7 +309,7 @@ bool RunawayAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
     return mainIn == mainOut;
 }
 
-void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -288,11 +323,30 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     if (numSamples <= 0 || totalNumInputChannels <= 0)
         return;
 
+    // Wait-free MIDI note capture for resonator pitch tracking
+    for (const auto metadata : midiMessages)
+    {
+        const auto msg = metadata.getMessage();
+        if (msg.isNoteOn())
+        {
+            const float noteHz = juce::jlimit (35.0f, 1200.0f,
+                                               static_cast<float> (juce::MidiMessage::getMidiNoteInHertz (msg.getNoteNumber())));
+            midiNoteFreqHz.store (noteHz, std::memory_order_relaxed);
+            hasMidiNote.store (true, std::memory_order_relaxed);
+        }
+    }
+
     const int modeIdx = static_cast<int> (std::lround (modeParam->load()));
+    const int loopEngIdx = static_cast<int> (std::lround (loopEngineParam->load()));
+    const bool loopEnabled = (loopActiveParam->load() >= 0.5f);
+    const float loopLevelDb = loopLevelParam->load();
     const float preCutoffHz = preCutoffParam->load();
     const float driveNorm = driveParam->load() * 0.01f;
     const float charNorm = characterParam->load() * 0.01f;
-    const float pitchHz = pitchParam->load();
+    const bool midiTracking = (midiTrackParam->load() >= 0.5f);
+    const float pitchHz = (midiTracking && hasMidiNote.load (std::memory_order_relaxed))
+                              ? midiNoteFreqHz.load (std::memory_order_relaxed)
+                              : pitchParam->load();
     const float feedbackNorm = feedbackParam->load() * 0.01f;
     const float loopCutoffHz = loopCutoffParam->load();
     const float spreadNorm = spreadParam->load() * 0.01f;
@@ -302,6 +356,9 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float wetLevelDb = outputParam->load();
 
     waveshaperEngine.setParameters (modeIdx,
+                                    loopEngIdx,
+                                    loopEnabled,
+                                    loopLevelDb,
                                     preCutoffHz,
                                     driveNorm,
                                     charNorm,
