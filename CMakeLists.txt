@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS deployment target")
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build Universal Binary for macOS")
+set(CMAKE_XCODE_ATTRIBUTE_LLVM_LTO "NO")
 
 project(Runaway VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
 
@@ -59,6 +60,5 @@ target_link_libraries(Runaway
         juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
