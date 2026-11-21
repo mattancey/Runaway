@@ -1,5 +1,3 @@
-// Fichier: CMakeLists.txt
-
 cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS deployment target")
