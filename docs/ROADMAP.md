@@ -1,5 +1,3 @@
-// Fichier: docs/ROADMAP.md
-
 # Runaway — Feuille de Route & Laboratoire Sonore (VST3 / AU)
 
 **Runaway** est un processeur hybride **Distortion West-Coast + Résonateur BBD + Synthèse Réverbérante**, conçu étape par étape pour macOS 12+ (Universal Binary `arm64 + x86_64`, VST3 & AU dans Ableton Live).
