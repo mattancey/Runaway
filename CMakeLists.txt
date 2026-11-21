@@ -1,10 +1,12 @@
+// Fichier: CMakeLists.txt
+
 cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS deployment target")
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build Universal Binary for macOS")
 set(CMAKE_XCODE_ATTRIBUTE_LLVM_LTO "NO")
 
-project(Runaway VERSION 0.2.1 LANGUAGES C CXX OBJC OBJCXX)
+project(Runaway VERSION 0.3.0 LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,7 +26,7 @@ FetchContent_MakeAvailable(JUCE)
 juce_add_plugin(Runaway
     COMPANY_NAME                "RunawayAudio"
     IS_SYNTH                    FALSE
-    NEEDS_MIDI_INPUT            FALSE
+    NEEDS_MIDI_INPUT            TRUE
     NEEDS_MIDI_OUTPUT           FALSE
     IS_MIDI_EFFECT              FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
@@ -34,7 +36,7 @@ juce_add_plugin(Runaway
     FORMATS                     AU VST3 Standalone
     PRODUCT_NAME                "Runaway"
     BUNDLE_ID                   "com.runawayaudio.runaway"
-    AU_MAIN_TYPE                "kAudioUnitType_Effect"
+    AU_MAIN_TYPE                "kAudioUnitType_MusicEffect"
 )
 
 target_sources(Runaway
