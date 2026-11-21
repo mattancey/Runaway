@@ -19,6 +19,12 @@ public:
                            float rotaryEndAngle,
                            juce::Slider& slider) override;
 
+    void drawButtonBackground (juce::Graphics& g,
+                               juce::Button& button,
+                               const juce::Colour& backgroundColour,
+                               bool shouldDrawButtonAsHighlighted,
+                               bool shouldDrawButtonAsDown) override;
+
 private:
     juce::Colour accent { 0xffff7a2f };
 };
@@ -36,13 +42,16 @@ public:
 private:
     void timerCallback() override;
     void updateModeAesthetics();
+    void updateButtonLabels();
     void configureKnob (juce::Slider& slider, juce::Label& title, const juce::String& text);
+    void configureToggleButton (juce::TextButton& button);
 
     RunawayAudioProcessor& audioProcessor;
     RunawayLookAndFeel lookAndFeel;
 
     juce::ComboBox modeSelector;
 
+    // Row 1: Waveshaper + Master
     juce::Slider preCutoffSlider;
     juce::Slider driveSlider;
     juce::Slider characterSlider;
@@ -55,6 +64,21 @@ private:
     juce::Label mixLabel;
     juce::Label outputLabel;
 
+    // Row 2: BBD Resonator Loop + Toggles
+    juce::Slider pitchSlider;
+    juce::Slider feedbackSlider;
+    juce::Slider loopCutoffSlider;
+    juce::Slider spreadSlider;
+
+    juce::Label pitchLabel;
+    juce::Label feedbackLabel;
+    juce::Label loopCutoffLabel;
+    juce::Label spreadLabel;
+
+    juce::TextButton polarityButton;
+    juce::TextButton loopModeButton;
+
+    // Declare attachments AFTER UI components so they detach safely before destruction
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> preCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> driveAttachment;
@@ -62,7 +86,15 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
 
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> feedbackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopCutoffAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> spreadAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> polarityAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> loopModeAttachment;
+
     juce::Rectangle<int> scopeBounds;
+    juce::Rectangle<int> row2Bounds;
     std::array<float, RunawayAudioProcessor::scopeBufferSize> dryScope {};
     std::array<float, RunawayAudioProcessor::scopeBufferSize> wetScope {};
     int lastModeIndex = -1;
