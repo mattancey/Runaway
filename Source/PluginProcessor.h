@@ -53,6 +53,12 @@ private:
     std::atomic<float>* preCutoffParam = nullptr;
     std::atomic<float>* driveParam = nullptr;
     std::atomic<float>* characterParam = nullptr;
+    std::atomic<float>* pitchParam = nullptr;
+    std::atomic<float>* feedbackParam = nullptr;
+    std::atomic<float>* loopCutoffParam = nullptr;
+    std::atomic<float>* spreadParam = nullptr;
+    std::atomic<float>* polarityParam = nullptr;
+    std::atomic<float>* inLoopParam = nullptr;
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
 
