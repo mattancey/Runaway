@@ -5,13 +5,17 @@
 #include <array>
 #include <atomic>
 
-class RunawayAudioProcessor final : public juce::AudioProcessor
+class RunawayAudioProcessor final : public juce::AudioProcessor,
+                                    private juce::AudioProcessorValueTreeState::Listener,
+                                    private juce::AsyncUpdater
 {
 public:
     static constexpr int scopeBufferSize = 512;
+    static constexpr int numModes = 4;
+    static constexpr int numPerModeParams = 10;
 
     RunawayAudioProcessor();
-    ~RunawayAudioProcessor() override = default;
+    ~RunawayAudioProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -47,6 +51,16 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
+    void handleAsyncUpdate() override;
+    void applyModeSwitch (int nextMode);
+    void initDefaultModePresets();
+
+    static constexpr std::array<const char*, numPerModeParams> perModeParamIds {
+        "preCutoff", "drive", "character", "pitch", "feedback",
+        "loopCutoff", "spread", "polarity", "inLoop", "output"
+    };
+
     juce::AudioProcessorValueTreeState apvts;
 
     std::atomic<float>* modeParam = nullptr;
@@ -61,6 +75,12 @@ private:
     std::atomic<float>* inLoopParam = nullptr;
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
+
+    // Lock-free per-mode parameter memory (atomic floats -> safe from any thread)
+    std::array<std::array<std::atomic<float>, numPerModeParams>, numModes> modePresets {};
+    std::atomic<int> activeModeIndex { 0 };
+    std::atomic<int> pendingModeIndex { 0 };
+    std::atomic<bool> isRecallingMode { false };
 
     runaway::dsp::WaveshaperEngine waveshaperEngine;
 
