@@ -1,3 +1,5 @@
+// Fichier: Source/DSP/WaveshaperEngine.h
+
 #pragma once
 
 #include <juce_dsp/juce_dsp.h>
@@ -45,7 +47,6 @@ public:
         latencySamples = juce::jlimit (0, maxSafeLatency,
                                        juce::roundToInt (oversampler->getLatencyInSamples()));
 
-        // Pre-allocate BBD resonator delay lines at 4x oversampled rate (down to 25 Hz + spread headroom)
         delayLineLength = static_cast<int> (std::ceil (oversampledRate / 25.0)) + 64;
         for (int ch = 0; ch < maxChannels; ++ch)
             delayBuffers[static_cast<size_t> (ch)].assign (static_cast<size_t> (delayLineLength), 0.0f);
@@ -64,7 +65,7 @@ public:
         driveSmooth.reset (hostSampleRate, smoothSec);
         characterSmooth.reset (hostSampleRate, smoothSec);
         mixSmooth.reset (hostSampleRate, smoothSec);
-        outputGainSmooth.reset (hostSampleRate, smoothSec);
+        wetGainSmooth.reset (hostSampleRate, smoothSec);
 
         pitchHzSmooth.reset (hostSampleRate, 0.025);
         feedbackSmooth.reset (hostSampleRate, smoothSec);
@@ -97,7 +98,6 @@ public:
             loopLp6State[c] = 0.0f;
             loopHpX1[c] = 0.0f;
             loopHpY1[c] = 0.0f;
-            feedbackTap[c] = 0.0f;
             delayWritePos[c] = 0;
             dryRing[c].fill (0.0f);
             std::fill (delayBuffers[c].begin(), delayBuffers[c].end(), 0.0f);
@@ -121,7 +121,7 @@ public:
                         bool invertPolarity,
                         bool shaperInLoop,
                         float mixNorm,
-                        float outputDb) noexcept
+                        float wetLevelDb) noexcept
     {
         currentMode = static_cast<Mode> (juce::jlimit (0, 3, modeIndex));
         inLoopRouting = shaperInLoop;
@@ -135,7 +135,7 @@ public:
         spreadSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, spreadNorm));
         polaritySmooth.setTargetValue (invertPolarity ? -1.0f : 1.0f);
         mixSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, mixNorm));
-        outputGainSmooth.setTargetValue (juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, outputDb)));
+        wetGainSmooth.setTargetValue (juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, wetLevelDb)));
     }
 
     void process (juce::AudioBuffer<float>& buffer) noexcept
@@ -165,13 +165,12 @@ public:
             std::array<float, maxSubBlock> delayLSub {};
             std::array<float, maxSubBlock> delayRSub {};
             std::array<float, maxSubBlock> fbSignedSub {};
-            std::array<float, maxSubBlock> loopGSub {};
             std::array<float, maxSubBlock> loopA1Sub {};
             std::array<float, maxSubBlock> loopA2Sub {};
             std::array<float, maxSubBlock> loopA3Sub {};
             std::array<float, maxSubBlock> lp6AlphaSub {};
             std::array<float, maxSubBlock> mixSub {};
-            std::array<float, maxSubBlock> outGainSub {};
+            std::array<float, maxSubBlock> wetGainSub {};
 
             for (int i = 0; i < subLen; ++i)
             {
@@ -182,7 +181,7 @@ public:
                 driveSub[si] = driveSmooth.getNextValue();
                 charSub[si] = characterSmooth.getNextValue();
                 mixSub[si] = mixSmooth.getNextValue();
-                outGainSub[si] = outputGainSmooth.getNextValue();
+                wetGainSub[si] = wetGainSmooth.getNextValue();
 
                 const float pitchHz = pitchHzSmooth.getNextValue();
                 const float fb = feedbackSmooth.getNextValue();
@@ -192,7 +191,6 @@ public:
 
                 fbSignedSub[si] = fb * pol;
 
-                // Subtle Sealegs-inspired dual LFO drift & L/R detune offset
                 lfoPhase[0] += lfoInc0;
                 if (lfoPhase[0] >= 1.0f) lfoPhase[0] -= 1.0f;
                 lfoPhase[1] += lfoInc1;
@@ -207,17 +205,14 @@ public:
                 delayLSub[si] = juce::jlimit (4.0f, maxDelay, baseDelay * (1.0f - detuneRatio + driftL));
                 delayRSub[si] = juce::jlimit (4.0f, maxDelay, baseDelay * (1.0f + detuneRatio + driftR));
 
-                // Pre-compute 12 dB/oct loop TPT SVF coefficients at oversampled rate
                 const float clampedFc = juce::jlimit (120.0f, 0.35f * osRateF, loopFc);
                 const float g = std::tan (juce::MathConstants<float>::pi * clampedFc / osRateF);
-                const float k = 1.15f; // gentle Q ~ 0.87 for warm Echon 6 ping
+                const float k = 1.15f;
                 const float a1 = 1.0f / (1.0f + g * (g + k));
-                loopGSub[si] = g;
                 loopA1Sub[si] = a1;
                 loopA2Sub[si] = g * a1;
                 loopA3Sub[si] = g * loopA2Sub[si];
 
-                // Gentle 6 dB/oct BBD damping tied softly to resonator pitch + loop cutoff
                 const float bbdClockFc = std::min (0.40f * osRateF, std::min (loopFc * 1.5f, pitchHz * 18.0f + 1200.0f));
                 const float omega6 = 2.0f * juce::MathConstants<float>::pi * bbdClockFc / osRateF;
                 lp6AlphaSub[si] = omega6 / (1.0f + omega6);
@@ -266,10 +261,8 @@ public:
 
                     const float xIn = chData[osIdx];
 
-                    // 1. Read previous delayed feedback sample using cubic Hermite interpolation
                     const float delayedRaw = readDelayCubic (dBuf, delayWritePos[c], delayLen);
 
-                    // 2. Morphor Echon 6 double damping: LP 6dB + LP 12dB + 18Hz anti-DC HPF
                     loopLp6State[c] += lp6Alpha * (delayedRaw - loopLp6State[c]);
 
                     const float v3 = loopLp6State[c] - loopLp12Ic2[c];
@@ -278,16 +271,13 @@ public:
                     loopLp12Ic1[c] = 2.0f * v1 - loopLp12Ic1[c];
                     loopLp12Ic2[c] = 2.0f * v2 - loopLp12Ic2[c];
 
-                    // Remove sub-18Hz / DC drift inside loop
                     const float hpOut = v2 - loopHpX1[c] + hpR * loopHpY1[c];
                     loopHpX1[c] = v2;
                     loopHpY1[c] = hpOut;
 
-                    // 3. SOMA-inspired soft optical loop limiter prevents harsh blow-up at 98% feedback
                     const float fbLimited = std::tanh (hpOut * 0.78f) / 0.78f;
                     const float fbReturn = fbLimited * fbSigned;
 
-                    // 4. Topology routing: PRE-LOOP vs IN-LOOP waveshaping
                     float loopSignal = 0.0f;
 
                     if (inLoopRouting)
@@ -301,13 +291,11 @@ public:
                         loopSignal = shaped + fbReturn;
                     }
 
-                    // Gentle 1-pole DC blocker on output path
                     const float dcR = 0.9992f;
                     const float dcY = loopSignal - dcPrevX[c] + dcR * dcPrevY[c];
                     dcPrevX[c] = loopSignal;
                     dcPrevY[c] = dcY;
 
-                    // 5. Write current node back into BBD delay line (soft-bounded for stability)
                     dBuf[static_cast<size_t> (delayWritePos[c])] = juce::jlimit (-4.0f, 4.0f, loopSignal);
                     delayWritePos[c] = (delayWritePos[c] + 1) % delayLineLength;
 
@@ -317,12 +305,13 @@ public:
 
             oversampler->processSamplesDown (subBlock);
 
+            // Wet-only gain & soft ceiling; Dry stays 100% untouched
             for (int i = 0; i < subLen; ++i)
             {
                 const size_t si = static_cast<size_t> (i);
                 const int sIdx = sampleOffset + i;
                 const float mix = mixSub[si];
-                const float gain = outGainSub[si];
+                const float wetGain = wetGainSub[si];
 
                 const int readIdx = (dryWritePos - subLen + i - latencySamples + dryDelayBufferSize * 2)
                                     % dryDelayBufferSize;
@@ -330,12 +319,12 @@ public:
                 for (int ch = 0; ch < numChannels; ++ch)
                 {
                     const float dry = dryRing[static_cast<size_t> (ch)][static_cast<size_t> (readIdx)];
-                    const float wet = buffer.getSample (ch, sIdx);
-                    float out = (dry * (1.0f - mix) + wet * mix) * gain;
+                    float wet = buffer.getSample (ch, sIdx) * wetGain;
 
-                    if (std::abs (out) > 1.0f)
-                        out = std::tanh (out * 0.85f) / 0.85f;
+                    if (std::abs (wet) > 1.0f)
+                        wet = std::tanh (wet * 0.85f) / 0.85f;
 
+                    const float out = dry * (1.0f - mix) + wet * mix;
                     buffer.setSample (ch, sIdx, out);
                 }
             }
@@ -538,7 +527,7 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> spreadSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> polaritySmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> mixSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> outputGainSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wetGainSmooth;
 
     std::array<float, maxChannels> adaaPrevX {};
     std::array<float, maxChannels> dcPrevX {};
@@ -553,7 +542,6 @@ private:
     std::array<float, maxChannels> loopLp6State {};
     std::array<float, maxChannels> loopHpX1 {};
     std::array<float, maxChannels> loopHpY1 {};
-    std::array<float, maxChannels> feedbackTap {};
     std::array<float, maxChannels> lfoPhase {};
 
     std::array<std::vector<float>, maxChannels> delayBuffers {};
