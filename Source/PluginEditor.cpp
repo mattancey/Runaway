@@ -77,18 +77,43 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
 
     auto& apvts = audioProcessor.getAPVTS();
 
-    presetSelector.addItemList (RunawayAudioProcessor::getFactoryPresetNames(), 1);
-    presetSelector.setTextWhenNothingSelected ("PRESETS...");
+    configureActionButton (abSlotButton);
+    abSlotButton.onClick = [this]
+    {
+        audioProcessor.toggleABSlot();
+        updateButtonLabels();
+    };
+
+    configureActionButton (abCopyButton);
+    abCopyButton.setButtonText ("COPY");
+    abCopyButton.onClick = [this]
+    {
+        audioProcessor.copyActiveSlotToOther();
+    };
+
     presetSelector.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff1a1d24));
     presetSelector.setColour (juce::ComboBox::outlineColourId, juce::Colour (0xff323846));
     presetSelector.setColour (juce::ComboBox::textColourId, juce::Colour (0xffcfd6e6));
     presetSelector.onChange = [this]
     {
-        const int sel = presetSelector.getSelectedId() - 1;
-        if (sel >= 0)
-            audioProcessor.loadFactoryPreset (sel);
+        const int id = presetSelector.getSelectedId();
+        if (id >= 1 && id <= RunawayAudioProcessor::numFactoryPresets)
+        {
+            audioProcessor.loadFactoryPreset (id - 1);
+        }
+        else if (id >= 100)
+        {
+            const int userIdx = id - 100;
+            if (userIdx >= 0 && userIdx < userPresetFiles.size())
+                audioProcessor.loadUserPresetFromFile (userPresetFiles[userIdx]);
+        }
     };
     addAndMakeVisible (presetSelector);
+    refreshPresetMenu();
+
+    configureActionButton (savePresetButton);
+    savePresetButton.setButtonText ("SAVE");
+    savePresetButton.onClick = [this] { triggerSavePreset(); };
 
     modeSelector.addItemList ({
         "BUCHLA / SOMA  —  259 Folder + Harvezi Spoil",
@@ -123,6 +148,17 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     envTargetSelector.setColour (juce::ComboBox::textColourId, juce::Colour (0xffe8ecf4));
     addAndMakeVisible (envTargetSelector);
 
+    lpgModeSelector.addItemList ({
+        "LPG: OFF",
+        "LPG: BOTH (292)",
+        "LPG: VCA ONLY",
+        "LPG: FILTER ONLY"
+    }, 1);
+    lpgModeSelector.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff181b22));
+    lpgModeSelector.setColour (juce::ComboBox::outlineColourId, juce::Colour (0xff323846));
+    lpgModeSelector.setColour (juce::ComboBox::textColourId, juce::Colour (0xffe8ecf4));
+    addAndMakeVisible (lpgModeSelector);
+
     configureKnob (preCutoffSlider, preCutoffLabel, "PRE-LPF");
     configureKnob (driveSlider, driveLabel, "DRIVE");
     configureKnob (characterSlider, characterLabel, "SPOIL");
@@ -138,6 +174,9 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     configureKnob (envAmountSlider, envAmountLabel, "ENV AMOUNT");
     configureKnob (envReleaseSlider, envReleaseLabel, "ENV RELEASE");
 
+    configureKnob (lpgDecaySlider, lpgDecayLabel, "LPG DECAY");
+    configureKnob (lpgResSlider, lpgResLabel, "LPG RING / Q");
+
     configureToggleButton (loopActiveButton);
     configureToggleButton (midiTrackButton);
     configureToggleButton (polarityButton);
@@ -146,6 +185,7 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, "mode", modeSelector);
     loopEngineAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, "loopEngine", loopEngineSelector);
     envTargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, "envTarget", envTargetSelector);
+    lpgModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, "lpgMode", lpgModeSelector);
 
     preCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "preCutoff", preCutoffSlider);
     driveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "drive", driveSlider);
@@ -161,6 +201,9 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
 
     envAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "envAmount", envAmountSlider);
     envReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "envRelease", envReleaseSlider);
+
+    lpgDecayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "lpgDecay", lpgDecaySlider);
+    lpgResAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "lpgRes", lpgResSlider);
 
     loopActiveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, "loopActive", loopActiveButton);
     midiTrackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, "midiTrack", midiTrackButton);
@@ -184,14 +227,67 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     updateModeAesthetics();
     updateLoopEngineLabels();
     updateButtonLabels();
-    setSize (840, 690);
+    setSize (880, 720);
     startTimerHz (30);
 }
 
 RunawayAudioProcessorEditor::~RunawayAudioProcessorEditor()
 {
     stopTimer();
+    fileChooser.reset();
     setLookAndFeel (nullptr);
+}
+
+void RunawayAudioProcessorEditor::refreshPresetMenu (const juce::String& selectName)
+{
+    presetSelector.clear (juce::dontSendNotification);
+    presetSelector.setTextWhenNothingSelected ("PRESETS...");
+
+    const auto factoryNames = RunawayAudioProcessor::getFactoryPresetNames();
+    for (int i = 0; i < factoryNames.size(); ++i)
+        presetSelector.addItem (factoryNames[i], i + 1);
+
+    userPresetFiles = RunawayAudioProcessor::scanUserPresetFiles();
+    if (! userPresetFiles.isEmpty())
+    {
+        presetSelector.addSeparator();
+        presetSelector.addSectionHeading ("USER PRESETS");
+
+        for (int i = 0; i < userPresetFiles.size(); ++i)
+        {
+            const auto name = userPresetFiles[i].getFileNameWithoutExtension();
+            presetSelector.addItem (name, 100 + i);
+            if (selectName.isNotEmpty() && name == selectName)
+                presetSelector.setSelectedId (100 + i, juce::dontSendNotification);
+        }
+    }
+}
+
+void RunawayAudioProcessorEditor::triggerSavePreset()
+{
+    const auto dir = RunawayAudioProcessor::getUserPresetsDirectory();
+    if (! dir.isDirectory())
+        dir.createDirectory();
+
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Save Runaway Preset",
+        dir.getChildFile ("MyPatch.runaway"),
+        "*.runaway");
+
+    fileChooser->launchAsync (
+        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& chooser)
+        {
+            const auto result = chooser.getResult();
+            if (result != juce::File{})
+            {
+                const auto target = result.hasFileExtension (".runaway")
+                    ? result
+                    : result.withFileExtension (".runaway");
+                if (audioProcessor.saveUserPresetToFile (target))
+                    refreshPresetMenu (target.getFileNameWithoutExtension());
+            }
+        });
 }
 
 void RunawayAudioProcessorEditor::configureKnob (juce::Slider& slider, juce::Label& title, const juce::String& text)
@@ -218,8 +314,18 @@ void RunawayAudioProcessorEditor::configureToggleButton (juce::TextButton& butto
     addAndMakeVisible (button);
 }
 
+void RunawayAudioProcessorEditor::configureActionButton (juce::TextButton& button)
+{
+    button.setClickingTogglesState (false);
+    button.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd5dceb));
+    button.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
+    addAndMakeVisible (button);
+}
+
 void RunawayAudioProcessorEditor::updateButtonLabels()
 {
+    abSlotButton.setButtonText (audioProcessor.getActiveABSlot() == 0 ? "SLOT: A" : "SLOT: B");
+
     const bool loopOn = loopActiveButton.getToggleState();
     const bool inLoopOn = loopModeButton.getToggleState();
     loopActiveButton.setButtonText (loopOn ? "LOOP: ON" : "LOOP: BYPASS");
@@ -253,6 +359,11 @@ void RunawayAudioProcessorEditor::updateButtonLabels()
     const float envDim = envActive ? 1.0f : 0.50f;
     envAmountSlider.setAlpha (envDim);
     envReleaseSlider.setAlpha (envDim);
+
+    const bool lpgActive = (lpgModeSelector.getSelectedId() > 1);
+    const float lpgDim = lpgActive ? 1.0f : 0.45f;
+    lpgDecaySlider.setAlpha (lpgDim);
+    lpgResSlider.setAlpha (lpgDim);
 }
 
 void RunawayAudioProcessorEditor::updateLoopEngineLabels()
@@ -322,6 +433,15 @@ void RunawayAudioProcessorEditor::updateModeAesthetics()
     repaint();
 }
 
+void RunawayAudioProcessorEditor::mouseDown (const juce::MouseEvent& event)
+{
+    if (scopeBounds.contains (event.getPosition()))
+    {
+        showTransferCurve = ! showTransferCurve;
+        repaint (scopeBounds);
+    }
+}
+
 void RunawayAudioProcessorEditor::timerCallback()
 {
     updateModeAesthetics();
@@ -331,9 +451,13 @@ void RunawayAudioProcessorEditor::timerCallback()
     const float targetEnv = audioProcessor.getEnvelopeMeterLevel();
     envMeterSmooth = envMeterSmooth * 0.65f + targetEnv * 0.35f;
 
+    const float targetLpg = audioProcessor.getVactrolMeterLevel();
+    lpgMeterSmooth = lpgMeterSmooth * 0.55f + targetLpg * 0.45f;
+
     audioProcessor.readScopeData (dryScope, wetScope);
     repaint (scopeBounds);
     repaint (envMeterBounds);
+    repaint (lpgMeterBounds);
 }
 
 void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
@@ -349,12 +473,13 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colour (0xfff0f3fa));
     g.setFont (juce::Font (juce::FontOptions (21.0f, juce::Font::bold)));
-    g.drawText ("RUNAWAY", 20, 10, 140, 26, juce::Justification::centredLeft);
+    g.drawText ("RUNAWAY", 18, 10, 130, 26, juce::Justification::centredLeft);
 
     g.setColour (lookAndFeel.getAccentColour());
-    g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
-    g.drawText ("4x WAVESHAPER • ECHON 6 / NIGHTSKY / ANALOG HEAT", 20, 34, 340, 14, juce::Justification::centredLeft);
+    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    g.drawText ("v0.5  •  BUCHLA LPG / ECHON 6 / NIGHTSKY", 18, 34, 260, 14, juce::Justification::centredLeft);
 
+    // Visualiser panel (Scope or Transfer Curve X/Y)
     const auto sf = scopeBounds.toFloat();
     g.setColour (juce::Colour (0xff090b0f));
     g.fillRoundedRectangle (sf, 8.0f);
@@ -363,54 +488,128 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colour (0xff181c24));
     g.drawHorizontalLine (scopeBounds.getCentreY(), sf.getX() + 6.0f, sf.getRight() - 6.0f);
-    for (int i = 1; i < 4; ++i)
-    {
-        const float gx = sf.getX() + sf.getWidth() * (static_cast<float> (i) / 4.0f);
-        g.drawVerticalLine (static_cast<int> (gx), sf.getY() + 6.0f, sf.getBottom() - 6.0f);
-    }
+    g.drawVerticalLine (scopeBounds.getCentreX(), sf.getY() + 6.0f, sf.getBottom() - 6.0f);
 
     if (scopeBounds.getWidth() > 16)
     {
-        juce::Path dryPath;
-        juce::Path wetPath;
-
-        const float midY = sf.getCentreY();
-        const float ampScale = sf.getHeight() * 0.42f;
-        const int n = RunawayAudioProcessor::scopeBufferSize;
-
-        for (int i = 0; i < n; ++i)
+        if (showTransferCurve)
         {
-            const float px = sf.getX() + 6.0f
-                             + (sf.getWidth() - 12.0f) * (static_cast<float> (i) / static_cast<float> (n - 1));
-            const float dY = midY - juce::jlimit (-1.1f, 1.1f, dryScope[static_cast<size_t> (i)]) * ampScale;
-            const float wY = midY - juce::jlimit (-1.1f, 1.1f, wetScope[static_cast<size_t> (i)]) * ampScale;
+            // Subtle y = x reference line
+            g.setColour (juce::Colour (0xff2f3644));
+            g.drawLine (sf.getX() + 12.0f, sf.getBottom() - 8.0f,
+                        sf.getRight() - 12.0f, sf.getY() + 8.0f, 1.0f);
 
-            if (i == 0)
+            const int modeIdx = std::max (0, modeSelector.getSelectedId() - 1);
+            const float drvNorm = static_cast<float> (driveSlider.getValue() * 0.01);
+            const float chrNorm = static_cast<float> (characterSlider.getValue() * 0.01);
+
+            juce::Path curvePath;
+            constexpr int numPts = 180;
+            const float midY = sf.getCentreY();
+            const float ampScale = sf.getHeight() * 0.42f;
+
+            for (int i = 0; i < numPts; ++i)
             {
-                dryPath.startNewSubPath (px, dY);
-                wetPath.startNewSubPath (px, wY);
+                const float norm = static_cast<float> (i) / static_cast<float> (numPts - 1);
+                const float xIn = -1.0f + 2.0f * norm;
+                const float yOut = runaway::dsp::WaveshaperEngine::evalTransferPreview (modeIdx, xIn, drvNorm, chrNorm);
+                const float px = sf.getX() + 12.0f + (sf.getWidth() - 24.0f) * norm;
+                const float py = midY - juce::jlimit (-1.1f, 1.1f, yOut) * ampScale;
+
+                if (i == 0)
+                    curvePath.startNewSubPath (px, py);
+                else
+                    curvePath.lineTo (px, py);
             }
-            else
+
+            g.setColour (lookAndFeel.getAccentColour());
+            g.strokePath (curvePath, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
+
+            // Live input excursion tracer along curve
+            const float livePeak = juce::jlimit (0.0f, 1.0f, audioProcessor.getLiveInputPeak());
+            if (livePeak > 0.01f)
             {
-                dryPath.lineTo (px, dY);
-                wetPath.lineTo (px, wY);
+                for (float sign : { -1.0f, 1.0f })
+                {
+                    const float xPt = sign * livePeak;
+                    const float yPt = runaway::dsp::WaveshaperEngine::evalTransferPreview (modeIdx, xPt, drvNorm, chrNorm);
+                    const float px = sf.getX() + 12.0f + (sf.getWidth() - 24.0f) * (0.5f + 0.5f * xPt);
+                    const float py = midY - juce::jlimit (-1.1f, 1.1f, yPt) * ampScale;
+                    g.setColour (juce::Colours::white.withAlpha (0.9f));
+                    g.fillEllipse (px - 3.5f, py - 3.5f, 7.0f, 7.0f);
+                }
             }
         }
+        else
+        {
+            for (int i = 1; i < 4; ++i)
+            {
+                if (i == 2) continue;
+                const float gx = sf.getX() + sf.getWidth() * (static_cast<float> (i) / 4.0f);
+                g.setColour (juce::Colour (0xff181c24));
+                g.drawVerticalLine (static_cast<int> (gx), sf.getY() + 6.0f, sf.getBottom() - 6.0f);
+            }
 
-        g.setColour (juce::Colour (0xff495163).withAlpha (0.55f));
-        g.strokePath (dryPath, juce::PathStrokeType (1.2f));
+            juce::Path dryPath;
+            juce::Path wetPath;
 
-        g.setColour (lookAndFeel.getAccentColour());
-        g.strokePath (wetPath, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
-                                                      juce::PathStrokeType::rounded));
+            const float midY = sf.getCentreY();
+            const float ampScale = sf.getHeight() * 0.42f;
+            const int n = RunawayAudioProcessor::scopeBufferSize;
+
+            for (int i = 0; i < n; ++i)
+            {
+                const float px = sf.getX() + 6.0f
+                                 + (sf.getWidth() - 12.0f) * (static_cast<float> (i) / static_cast<float> (n - 1));
+                const float dY = midY - juce::jlimit (-1.1f, 1.1f, dryScope[static_cast<size_t> (i)]) * ampScale;
+                const float wY = midY - juce::jlimit (-1.1f, 1.1f, wetScope[static_cast<size_t> (i)]) * ampScale;
+
+                if (i == 0)
+                {
+                    dryPath.startNewSubPath (px, dY);
+                    wetPath.startNewSubPath (px, wY);
+                }
+                else
+                {
+                    dryPath.lineTo (px, dY);
+                    wetPath.lineTo (px, wY);
+                }
+            }
+
+            g.setColour (juce::Colour (0xff495163).withAlpha (0.55f));
+            g.strokePath (dryPath, juce::PathStrokeType (1.2f));
+
+            g.setColour (lookAndFeel.getAccentColour());
+            g.strokePath (wetPath, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+        }
     }
 
     g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
-    g.setColour (juce::Colour (0xff677085));
-    g.drawText ("DRY IN", scopeBounds.getX() + 12, scopeBounds.getY() + 8, 60, 14, juce::Justification::left);
-    g.setColour (lookAndFeel.getAccentColour());
-    g.drawText ("RUNAWAY OUT", scopeBounds.getX() + 68, scopeBounds.getY() + 8, 100, 14, juce::Justification::left);
+    if (showTransferCurve)
+    {
+        g.setColour (lookAndFeel.getAccentColour());
+        g.drawText ("TRANSFER CURVE  y = f(x)", scopeBounds.getX() + 12, scopeBounds.getY() + 8, 170, 14, juce::Justification::left);
+    }
+    else
+    {
+        g.setColour (juce::Colour (0xff677085));
+        g.drawText ("DRY IN", scopeBounds.getX() + 12, scopeBounds.getY() + 8, 60, 14, juce::Justification::left);
+        g.setColour (lookAndFeel.getAccentColour());
+        g.drawText ("RUNAWAY OUT", scopeBounds.getX() + 68, scopeBounds.getY() + 8, 100, 14, juce::Justification::left);
+    }
 
+    // Clickable view pill
+    auto viewPill = juce::Rectangle<int> (scopeBounds.getRight() - 150, scopeBounds.getY() + 6, 140, 18);
+    g.setColour (juce::Colour (0xff181c24));
+    g.fillRoundedRectangle (viewPill.toFloat(), 4.0f);
+    g.setColour (juce::Colour (0xff8a93a6));
+    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    g.drawText (showTransferCurve ? "VIEW: CURVE  (CLICK)" : "VIEW: SCOPE  (CLICK)",
+                viewPill, juce::Justification::centred);
+
+    // Row 2 container (Loop Engine)
     const auto rf = row2Bounds.toFloat();
     g.setColour (juce::Colour (0xff13161d));
     g.fillRoundedRectangle (rf, 8.0f);
@@ -423,52 +622,77 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
                 row2Bounds.getX() + 14, row2Bounds.getY() + 14, 90, 18,
                 juce::Justification::centredLeft);
 
-    const auto ef = row3Bounds.toFloat();
+    // Row 3 Left container (Envelope Follower)
     g.setColour (juce::Colour (0xff13161d));
-    g.fillRoundedRectangle (ef, 8.0f);
+    g.fillRoundedRectangle (row3LeftBounds.toFloat(), 8.0f);
     g.setColour (juce::Colour (0xff232833));
-    g.drawRoundedRectangle (ef, 8.0f, 1.0f);
+    g.drawRoundedRectangle (row3LeftBounds.toFloat(), 8.0f, 1.0f);
 
     g.setColour (juce::Colour (0xff6b7488));
     g.drawText ("ENV FOLLOWER  (ANALOG HEAT)",
-                row3Bounds.getX() + 14, row3Bounds.getY() + 10, 210, 16,
+                row3LeftBounds.getX() + 12, row3LeftBounds.getY() + 8, 220, 16,
                 juce::Justification::centredLeft);
 
-    const auto mf = envMeterBounds.toFloat();
-    g.setColour (juce::Colour (0xff090b0f));
-    g.fillRoundedRectangle (mf, 4.0f);
-    g.setColour (juce::Colour (0xff252a36));
-    g.drawRoundedRectangle (mf, 4.0f, 1.0f);
+    // Row 3 Right container (Buchla 292 Vactrol LPG)
+    g.setColour (juce::Colour (0xff13161d));
+    g.fillRoundedRectangle (row3RightBounds.toFloat(), 8.0f);
+    g.setColour (juce::Colour (0xff232833));
+    g.drawRoundedRectangle (row3RightBounds.toFloat(), 8.0f, 1.0f);
 
-    const float fillW = std::max (0.0f, (mf.getWidth() - 4.0f) * juce::jlimit (0.0f, 1.0f, envMeterSmooth));
-    if (fillW > 1.0f)
+    g.setColour (juce::Colour (0xff6b7488));
+    g.drawText ("VACTROL LPG  (BUCHLA 292 / OPTOMIX)",
+                row3RightBounds.getX() + 12, row3RightBounds.getY() + 8, 260, 16,
+                juce::Justification::centredLeft);
+
+    auto drawMeter = [&] (const juce::Rectangle<int>& box, float val, const juce::String& labelText)
     {
-        g.setColour (lookAndFeel.getAccentColour().withAlpha (0.85f));
-        g.fillRoundedRectangle (mf.getX() + 2.0f, mf.getY() + 2.0f, fillW, mf.getHeight() - 4.0f, 3.0f);
-    }
+        const auto mf = box.toFloat();
+        g.setColour (juce::Colour (0xff090b0f));
+        g.fillRoundedRectangle (mf, 4.0f);
+        g.setColour (juce::Colour (0xff252a36));
+        g.drawRoundedRectangle (mf, 4.0f, 1.0f);
 
-    g.setColour (juce::Colour (0xff677085));
-    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-    g.drawText ("ENV ACTIVITY", envMeterBounds.getX(), envMeterBounds.getY() - 16, envMeterBounds.getWidth(), 14,
-                juce::Justification::centredLeft);
+        const float fillW = std::max (0.0f, (mf.getWidth() - 4.0f) * juce::jlimit (0.0f, 1.0f, val));
+        if (fillW > 1.0f)
+        {
+            g.setColour (lookAndFeel.getAccentColour().withAlpha (0.85f));
+            g.fillRoundedRectangle (mf.getX() + 2.0f, mf.getY() + 2.0f, fillW, mf.getHeight() - 4.0f, 3.0f);
+        }
+
+        g.setColour (juce::Colour (0xff677085));
+        g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+        g.drawText (labelText, box.getX(), box.getY() - 16, box.getWidth(), 14, juce::Justification::centredLeft);
+    };
+
+    drawMeter (envMeterBounds, envMeterSmooth, "ENV ACTIVITY");
+    drawMeter (lpgMeterBounds, lpgMeterSmooth, "VACTROL LED");
 }
 
 void RunawayAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
 
+    // Header: A/B + Copy + Presets + Save + Topology
     auto header = area.removeFromTop (56);
-    auto headerRight = header.removeFromRight (535).reduced (14, 12);
-    presetSelector.setBounds (headerRight.removeFromLeft (185));
+    auto headerRight = header.removeFromRight (605).reduced (12, 12);
+
+    abSlotButton.setBounds (headerRight.removeFromLeft (64));
+    headerRight.removeFromLeft (4);
+    abCopyButton.setBounds (headerRight.removeFromLeft (46));
+    headerRight.removeFromLeft (8);
+    presetSelector.setBounds (headerRight.removeFromLeft (162));
+    headerRight.removeFromLeft (4);
+    savePresetButton.setBounds (headerRight.removeFromLeft (48));
     headerRight.removeFromLeft (8);
     modeSelector.setBounds (headerRight);
 
-    area.reduce (20, 12);
+    area.reduce (20, 10);
 
-    scopeBounds = area.removeFromTop (112);
+    scopeBounds = area.removeFromTop (108);
     area.removeFromTop (10);
 
-    auto row1 = area.removeFromTop (128);
+    // Row 1: 5 knobs (Shaper + Master)
+    auto row1 = area.removeFromTop (124);
     const int col1W = area.getWidth() / 5;
 
     auto placeKnob1 = [&] (int index, juce::Slider& s, juce::Label& l)
@@ -486,7 +710,8 @@ void RunawayAudioProcessorEditor::resized()
 
     area.removeFromTop (10);
 
-    row2Bounds = area.removeFromTop (186);
+    // Row 2: Loop Engine container
+    row2Bounds = area.removeFromTop (180);
     auto innerRow2 = row2Bounds.reduced (10, 8);
 
     auto loopTopBar = innerRow2.removeFromTop (30);
@@ -512,32 +737,50 @@ void RunawayAudioProcessorEditor::resized()
     placeKnob2 (3, spreadSlider, spreadLabel);
     placeKnob2 (4, loopLevelSlider, loopLevelLabel);
 
-    auto toggleCol = innerRow2.withX (innerRow2.getX() + 5 * col2W).withWidth (col2W).reduced (4, 14);
-    polarityButton.setBounds (toggleCol.removeFromTop (38));
+    auto toggleCol = innerRow2.withX (innerRow2.getX() + 5 * col2W).withWidth (col2W).reduced (4, 12);
+    polarityButton.setBounds (toggleCol.removeFromTop (36));
     toggleCol.removeFromTop (10);
-    loopModeButton.setBounds (toggleCol.removeFromTop (38));
+    loopModeButton.setBounds (toggleCol.removeFromTop (36));
 
     area.removeFromTop (10);
 
-    row3Bounds = area;
-    auto innerRow3 = row3Bounds.reduced (14, 10);
+    // Row 3: Split Env Follower (left) + Vactrol LPG (right)
+    const int halfW = (area.getWidth() - 12) / 2;
+    row3LeftBounds = area.removeFromLeft (halfW);
+    area.removeFromLeft (12);
+    row3RightBounds = area;
 
-    auto envLeftCol = innerRow3.removeFromLeft (220);
-    envLeftCol.removeFromTop (24);
-    envTargetSelector.setBounds (envLeftCol.removeFromTop (30));
+    // Left: Env Follower
+    auto innerLeft = row3LeftBounds.reduced (12, 10);
+    innerLeft.removeFromTop (22);
+    auto envCtrlCol = innerLeft.removeFromLeft (158);
+    envTargetSelector.setBounds (envCtrlCol.removeFromTop (30));
+    envCtrlCol.removeFromTop (28);
+    envMeterBounds = envCtrlCol.removeFromTop (16);
 
-    innerRow3.removeFromLeft (16);
+    innerLeft.removeFromLeft (10);
+    const int envKnobW = innerLeft.getWidth() / 2;
+    auto envSlot1 = innerLeft.removeFromLeft (envKnobW);
+    envAmountLabel.setBounds (envSlot1.removeFromTop (16));
+    envAmountSlider.setBounds (envSlot1.reduced (2, 0));
 
-    auto placeEnvKnob = [&] (juce::Rectangle<int> slot, juce::Slider& s, juce::Label& l)
-    {
-        l.setBounds (slot.removeFromTop (16));
-        s.setBounds (slot.reduced (4, 0));
-    };
+    envReleaseLabel.setBounds (innerLeft.removeFromTop (16));
+    envReleaseSlider.setBounds (innerLeft.reduced (2, 0));
 
-    placeEnvKnob (innerRow3.removeFromLeft (130), envAmountSlider, envAmountLabel);
-    innerRow3.removeFromLeft (8);
-    placeEnvKnob (innerRow3.removeFromLeft (130), envReleaseSlider, envReleaseLabel);
+    // Right: Vactrol LPG
+    auto innerRight = row3RightBounds.reduced (12, 10);
+    innerRight.removeFromTop (22);
+    auto lpgCtrlCol = innerRight.removeFromLeft (158);
+    lpgModeSelector.setBounds (lpgCtrlCol.removeFromTop (30));
+    lpgCtrlCol.removeFromTop (28);
+    lpgMeterBounds = lpgCtrlCol.removeFromTop (16);
 
-    innerRow3.removeFromLeft (20);
-    envMeterBounds = innerRow3.withSizeKeepingCentre (innerRow3.getWidth(), 18).translated (0, 8);
+    innerRight.removeFromLeft (10);
+    const int lpgKnobW = innerRight.getWidth() / 2;
+    auto lpgSlot1 = innerRight.removeFromLeft (lpgKnobW);
+    lpgDecayLabel.setBounds (lpgSlot1.removeFromTop (16));
+    lpgDecaySlider.setBounds (lpgSlot1.reduced (2, 0));
+
+    lpgResLabel.setBounds (innerRight.removeFromTop (16));
+    lpgResSlider.setBounds (innerRight.reduced (2, 0));
 }
