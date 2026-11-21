@@ -1,5 +1,3 @@
-// Fichier: Source/PluginProcessor.cpp
-
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
