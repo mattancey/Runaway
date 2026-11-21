@@ -1,3 +1,5 @@
+// Fichier: Source/PluginEditor.h
+
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -50,10 +52,11 @@ private:
     RunawayAudioProcessor& audioProcessor;
     RunawayLookAndFeel lookAndFeel;
 
+    juce::ComboBox presetSelector;
     juce::ComboBox modeSelector;
     juce::ComboBox loopEngineSelector;
+    juce::ComboBox envTargetSelector;
 
-    // Row 1: Waveshaper + Master
     juce::Slider preCutoffSlider;
     juce::Slider driveSlider;
     juce::Slider characterSlider;
@@ -66,7 +69,6 @@ private:
     juce::Label mixLabel;
     juce::Label outputLabel;
 
-    // Row 2: Loop Resonator / Chord / Diffuse + Dedicated Loop Level + Toggles
     juce::Slider pitchSlider;
     juce::Slider feedbackSlider;
     juce::Slider loopCutoffSlider;
@@ -84,9 +86,15 @@ private:
     juce::TextButton polarityButton;
     juce::TextButton loopModeButton;
 
-    // Declare attachments AFTER UI components so they detach safely before destruction
+    juce::Slider envAmountSlider;
+    juce::Slider envReleaseSlider;
+    juce::Label envAmountLabel;
+    juce::Label envReleaseLabel;
+
+    // Attachments declared AFTER UI components so they detach safely before destruction
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> loopEngineAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> envTargetAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> preCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> driveAttachment;
@@ -100,6 +108,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> spreadAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopLevelAttachment;
 
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envAmountAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envReleaseAttachment;
+
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> loopActiveAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> midiTrackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> polarityAttachment;
@@ -107,8 +118,12 @@ private:
 
     juce::Rectangle<int> scopeBounds;
     juce::Rectangle<int> row2Bounds;
+    juce::Rectangle<int> row3Bounds;
+    juce::Rectangle<int> envMeterBounds;
+
     std::array<float, RunawayAudioProcessor::scopeBufferSize> dryScope {};
     std::array<float, RunawayAudioProcessor::scopeBufferSize> wetScope {};
+    float envMeterSmooth = 0.0f;
     int lastModeIndex = -1;
     int lastLoopEngineIndex = -1;
 
