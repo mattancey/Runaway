@@ -4,6 +4,8 @@
 #include "DSP/WaveshaperEngine.h"
 #include <array>
 #include <atomic>
+#include <memory>
+#include <cstdint>
 
 class RunawayAudioProcessor final : public juce::AudioProcessor,
                                     private juce::AudioProcessorValueTreeState::Listener,
@@ -12,7 +14,7 @@ class RunawayAudioProcessor final : public juce::AudioProcessor,
 public:
     static constexpr int scopeBufferSize = 512;
     static constexpr int numModes = 4;
-    static constexpr int numPerModeParams = 16;
+    static constexpr int numPerModeParams = 19;
     static constexpr int numFactoryPresets = 8;
 
     RunawayAudioProcessor();
@@ -61,12 +63,35 @@ public:
         return envMeterLevel.load (std::memory_order_relaxed);
     }
 
+    float getVactrolMeterLevel() const noexcept
+    {
+        return vactrolMeterLevel.load (std::memory_order_relaxed);
+    }
+
+    float getLiveInputPeak() const noexcept
+    {
+        return liveInputPeak.load (std::memory_order_relaxed);
+    }
+
+    // Presets & A/B Comparator (Message Thread only)
     static juce::StringArray getFactoryPresetNames();
+    static juce::File getUserPresetsDirectory();
+    static juce::Array<juce::File> scanUserPresetFiles();
+
     void loadFactoryPreset (int presetIndex);
+    bool saveUserPresetToFile (const juce::File& file) const;
+    bool loadUserPresetFromFile (const juce::File& file);
+
+    int getActiveABSlot() const noexcept { return activeABSlot; }
+    void toggleABSlot();
+    void copyActiveSlotToOther();
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static const std::array<const char*, numPerModeParams>& getPerModeParamIds() noexcept;
+
+    std::unique_ptr<juce::XmlElement> createStateXml() const;
+    void applyStateXml (const juce::XmlElement& xmlState);
 
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void handleAsyncUpdate() override;
@@ -92,6 +117,9 @@ private:
     std::atomic<float>* envTargetParam = nullptr;
     std::atomic<float>* envAmountParam = nullptr;
     std::atomic<float>* envReleaseParam = nullptr;
+    std::atomic<float>* lpgModeParam = nullptr;
+    std::atomic<float>* lpgDecayParam = nullptr;
+    std::atomic<float>* lpgResParam = nullptr;
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
 
@@ -100,9 +128,15 @@ private:
     std::atomic<int> pendingModeIndex { 0 };
     std::atomic<bool> isRecallingMode { false };
 
+    std::array<std::unique_ptr<juce::XmlElement>, 2> abSlotXml;
+    int activeABSlot = 0;
+
     std::atomic<float> midiNoteFreqHz { 110.0f };
     std::atomic<bool> hasMidiNote { false };
+    std::atomic<uint32_t> midiStrikeCounter { 0 };
     std::atomic<float> envMeterLevel { 0.0f };
+    std::atomic<float> vactrolMeterLevel { 0.0f };
+    std::atomic<float> liveInputPeak { 0.0f };
 
     runaway::dsp::WaveshaperEngine waveshaperEngine;
 
