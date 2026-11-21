@@ -27,6 +27,15 @@ public:
         Diffuse         // Strymon NightSky: 4x4 Hadamard FDN + octave shimmer
     };
 
+    enum class EnvTarget : int
+    {
+        Off = 0,
+        Drive,
+        Character,
+        LoopCutoff,
+        Pitch
+    };
+
     static constexpr int maxChannels = 2;
     static constexpr int numVoices = 4;
     static constexpr int maxSubBlock = 64;
@@ -52,7 +61,6 @@ public:
         latencySamples = juce::jlimit (0, maxSafeLatency,
                                        juce::roundToInt (oversampler->getLatencyInSamples()));
 
-        // Headroom for Diffuse FDN (up to ~5.6x base delay at 35 Hz)
         delayLineLength = static_cast<int> (std::ceil ((oversampledRate / 35.0) * 6.0)) + 128;
         for (size_t ch = 0; ch < maxChannels; ++ch)
             for (size_t v = 0; v < numVoices; ++v)
@@ -80,7 +88,8 @@ public:
         spreadSmooth.reset (hostSampleRate, smoothSec);
         polaritySmooth.reset (hostSampleRate, 0.008);
         loopBypassSmooth.reset (hostSampleRate, 0.025);
-        loopTrimSmooth.reset (hostSampleRate, 0.020);
+        inLoopTrimSmooth.reset (hostSampleRate, 0.020);
+        envAmountSmooth.reset (hostSampleRate, 0.020);
 
         reset();
     }
@@ -120,15 +129,18 @@ public:
 
         lfoPhase[0] = 0.0f;
         lfoPhase[1] = 0.37f;
+        envState = 0.0f;
+        lastEnvelopeOut = 0.0f;
         dryWritePos = 0;
     }
 
     int getLatencySamples() const noexcept { return latencySamples; }
+    float getLastEnvelopeLevel() const noexcept { return lastEnvelopeOut; }
 
     void setParameters (int modeIndex,
                         int loopEngineIndex,
                         bool loopEnabled,
-                        float loopLevelDb,
+                        float inLoopLevelDb,
                         float preCutoffHz,
                         float driveNorm,
                         float characterNorm,
@@ -138,15 +150,24 @@ public:
                         float spreadNorm,
                         bool invertPolarity,
                         bool shaperInLoop,
+                        int envTargetIndex,
+                        float envAmountSigned,
+                        float envReleaseMs,
                         float mixNorm,
                         float wetLevelDb) noexcept
     {
         currentMode = static_cast<Mode> (juce::jlimit (0, 3, modeIndex));
         currentLoopEngine = static_cast<LoopEngine> (juce::jlimit (0, 2, loopEngineIndex));
+        currentEnvTarget = static_cast<EnvTarget> (juce::jlimit (0, 4, envTargetIndex));
         inLoopRouting = shaperInLoop;
 
         loopBypassSmooth.setTargetValue (loopEnabled ? 1.0f : 0.0f);
-        loopTrimSmooth.setTargetValue (juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, loopLevelDb)));
+
+        // IN-LOOP LVL only engages when BOTH Loop is ON and Routing is IN-LOOP
+        const float inLoopTrimTarget = (loopEnabled && shaperInLoop)
+            ? juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, inLoopLevelDb))
+            : 1.0f;
+        inLoopTrimSmooth.setTargetValue (inLoopTrimTarget);
 
         preCutoffSmooth.setTargetValue (juce::jlimit (1800.0f, 20000.0f, preCutoffHz));
         driveSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, driveNorm));
@@ -156,6 +177,8 @@ public:
         loopCutoffSmooth.setTargetValue (juce::jlimit (200.0f, 16000.0f, loopCutoffHz));
         spreadSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, spreadNorm));
         polaritySmooth.setTargetValue (invertPolarity ? -1.0f : 1.0f);
+        envAmountSmooth.setTargetValue (juce::jlimit (-1.0f, 1.0f, envAmountSigned));
+        envReleaseMsCurrent = juce::jlimit (20.0f, 600.0f, envReleaseMs);
         mixSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, mixNorm));
         wetGainSmooth.setTargetValue (juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, wetLevelDb)));
     }
@@ -170,16 +193,18 @@ public:
         if (numChannels <= 0)
             return;
 
+        const float hostRateF = static_cast<float> (hostSampleRate);
         const float osRateF = static_cast<float> (oversampledRate);
         const float hpR = juce::jlimit (0.98f, 0.99995f,
                                         1.0f - (2.0f * juce::MathConstants<float>::pi * 18.0f / osRateF));
-        const float lfoInc0 = 0.41f / static_cast<float> (hostSampleRate);
-        const float lfoInc1 = 0.57f / static_cast<float> (hostSampleRate);
+        const float lfoInc0 = 0.41f / hostRateF;
+        const float lfoInc1 = 0.57f / hostRateF;
         const float shimmerInc = 1.0f / static_cast<float> (shimmerWindowSize);
 
-        // Harmonic intervals for Razornator Chord mode: Root, 5th, min3rd, Octave
+        const float envAttCoeff = std::exp (-1.0f / (0.003f * hostRateF));
+        const float envRelCoeff = std::exp (-1.0f / ((envReleaseMsCurrent * 0.001f) * hostRateF));
+
         static constexpr std::array<float, numVoices> chordPitchRatios { 1.0f, 1.498307f, 1.189207f, 2.0f };
-        // Mutually incommensurate ratios for NightSky 4x4 Hadamard FDN
         static constexpr std::array<float, numVoices> fdnRatios { 1.0f, 1.317f, 1.733f, 2.219f };
 
         int sampleOffset = 0;
@@ -195,7 +220,7 @@ public:
             std::array<float, maxSubBlock> fbSignedSub {};
             std::array<float, maxSubBlock> spreadSub {};
             std::array<float, maxSubBlock> loopBypassSub {};
-            std::array<float, maxSubBlock> loopGainSub {};
+            std::array<float, maxSubBlock> inLoopTrimSub {};
             std::array<float, maxSubBlock> loopA1Sub {};
             std::array<float, maxSubBlock> loopA2Sub {};
             std::array<float, maxSubBlock> loopA3Sub {};
@@ -207,25 +232,79 @@ public:
             for (int i = 0; i < subLen; ++i)
             {
                 const size_t si = static_cast<size_t> (i);
+                const int sIdx = sampleOffset + i;
+
+                float peakIn = 0.0f;
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    const size_t c = static_cast<size_t> (ch);
+                    const float inSample = buffer.getSample (ch, sIdx);
+                    peakIn = std::max (peakIn, std::abs (inSample));
+                    dryRing[c][static_cast<size_t> (dryWritePos)] = inSample;
+                }
+
+                if (peakIn > envState)
+                    envState = envAttCoeff * envState + (1.0f - envAttCoeff) * peakIn;
+                else
+                    envState = envRelCoeff * envState + (1.0f - envRelCoeff) * peakIn;
+
+                const float envNorm = juce::jlimit (0.0f, 1.0f, envState * 1.45f);
+                lastEnvelopeOut = envNorm;
+
                 const float cutoff = preCutoffSmooth.getNextValue();
                 preFilter.setCutoffFrequency (cutoff);
 
-                driveSub[si] = driveSmooth.getNextValue();
-                charSub[si] = characterSmooth.getNextValue();
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    const float rawIn = dryRing[static_cast<size_t> (ch)][static_cast<size_t> (dryWritePos)];
+                    const float preFiltered = preFilter.processSample (ch, rawIn);
+                    buffer.setSample (ch, sIdx, preFiltered);
+                }
+
+                dryWritePos = (dryWritePos + 1) % dryDelayBufferSize;
+
+                float drv = driveSmooth.getNextValue();
+                float chr = characterSmooth.getNextValue();
+                float pitchHz = pitchHzSmooth.getNextValue();
+                float loopFc = loopCutoffSmooth.getNextValue();
+                const float envMod = envNorm * envAmountSmooth.getNextValue();
+
+                switch (currentEnvTarget)
+                {
+                    case EnvTarget::Drive:
+                        drv = juce::jlimit (0.0f, 1.0f, drv + envMod * 0.80f);
+                        break;
+
+                    case EnvTarget::Character:
+                        chr = juce::jlimit (0.0f, 1.0f, chr + envMod * 0.85f);
+                        break;
+
+                    case EnvTarget::LoopCutoff:
+                        loopFc = juce::jlimit (200.0f, 16000.0f, loopFc * std::exp2 (envMod * 3.0f));
+                        break;
+
+                    case EnvTarget::Pitch:
+                        pitchHz = juce::jlimit (35.0f, 1200.0f, pitchHz * std::exp2 (envMod * 1.0f));
+                        break;
+
+                    case EnvTarget::Off:
+                    default:
+                        break;
+                }
+
+                driveSub[si] = drv;
+                charSub[si] = chr;
                 mixSub[si] = mixSmooth.getNextValue();
                 wetGainSub[si] = wetGainSmooth.getNextValue();
 
-                const float pitchHz = pitchHzSmooth.getNextValue();
                 const float fb = feedbackSmooth.getNextValue();
                 const float pol = polaritySmooth.getNextValue();
-                const float loopFc = loopCutoffSmooth.getNextValue();
                 const float spr = spreadSmooth.getNextValue();
                 const float loopActive = loopBypassSmooth.getNextValue();
-                const float loopTrim = loopTrimSmooth.getNextValue();
+                const float inLoopTrim = inLoopTrimSmooth.getNextValue();
 
                 loopBypassSub[si] = loopActive;
-                // Smoothly morph loop trim between 1.0 (when loop OFF) and user Loop Level (when loop ON)
-                loopGainSub[si] = 1.0f + loopActive * (loopTrim - 1.0f);
+                inLoopTrimSub[si] = inLoopTrim;
                 fbSignedSub[si] = fb * pol * loopActive;
                 spreadSub[si] = spr;
 
@@ -254,23 +333,8 @@ public:
                 const float omega6 = 2.0f * juce::MathConstants<float>::pi * bbdClockFc / osRateF;
                 lp6AlphaSub[si] = omega6 / (1.0f + omega6);
 
-                // Cascaded 1-pole alpha for 12dB/oct damping inside FDN branches
                 const float omegaFdn = 2.0f * juce::MathConstants<float>::pi * clampedFc / osRateF;
                 fdnLpAlphaSub[si] = omegaFdn / (1.0f + omegaFdn);
-
-                const int sIdx = sampleOffset + i;
-
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    const size_t c = static_cast<size_t> (ch);
-                    const float inSample = buffer.getSample (ch, sIdx);
-                    dryRing[c][static_cast<size_t> (dryWritePos)] = inSample;
-
-                    const float preFiltered = preFilter.processSample (ch, inSample);
-                    buffer.setSample (ch, sIdx, preFiltered);
-                }
-
-                dryWritePos = (dryWritePos + 1) % dryDelayBufferSize;
             }
 
             juce::dsp::AudioBlock<float> fullBlock (buffer);
@@ -297,7 +361,7 @@ public:
                     const float fbSigned = fbSignedSub[hostIdx];
                     const float spr = spreadSub[hostIdx];
                     const float loopActive = loopBypassSub[hostIdx];
-                    const float loopGain = loopGainSub[hostIdx];
+                    const float inLoopTrim = inLoopTrimSub[hostIdx];
                     const float a1 = loopA1Sub[hostIdx];
                     const float a2 = loopA2Sub[hostIdx];
                     const float a3 = loopA3Sub[hostIdx];
@@ -345,11 +409,9 @@ public:
                     }
                     else if (currentLoopEngine == LoopEngine::Chord)
                     {
-                        // Erica x 112dB Razornator: 4 tuned parallel delay voices
                         std::array<float, numVoices> voiceOuts {};
                         float chordSum = 0.0f;
 
-                        // Weight voices smoothly with Spread ("Chord Bloom")
                         const std::array<float, numVoices> voiceWeights {
                             1.0f,
                             spr * 0.72f,
@@ -370,7 +432,6 @@ public:
 
                         chordSum /= std::max (1.0f, normSum);
 
-                        // Damping filter on chord feedback bus
                         loopLp6State[c] += lp6Alpha * (chordSum - loopLp6State[c]);
                         const float v3 = loopLp6State[c] - loopLp12Ic2[c];
                         const float v1 = a1 * loopLp12Ic1[c] + a2 * v3;
@@ -396,7 +457,6 @@ public:
                             excite = shaped + fbReturn;
                         }
 
-                        // Feed each voice individually so all 4 chord strings resonate independently
                         for (size_t v = 0; v < numVoices; ++v)
                         {
                             const float vFb = std::tanh (voiceOuts[v] * 0.78f) / 0.78f;
@@ -411,7 +471,6 @@ public:
                     }
                     else
                     {
-                        // Strymon NightSky Diffuse: 4x4 Hadamard FDN + Octave-Up Glimmer
                         std::array<float, numVoices> y {};
                         const float sizeScale = 2.35f;
 
@@ -423,13 +482,11 @@ public:
                                                                baseDelay * sizeScale * fdnRatios[v] * stereoBias);
                             const float raw = readDelayCubic (delayBuffers[c][v], delayWritePos[c][v], vDelay);
 
-                            // Cascaded 2-pole (12dB/oct) lowpass per FDN branch
                             fdnLp6A[c][v] += fdnAlpha * (raw - fdnLp6A[c][v]);
                             fdnLp6B[c][v] += fdnAlpha * (fdnLp6A[c][v] - fdnLp6B[c][v]);
                             y[v] = fdnLp6B[c][v];
                         }
 
-                        // Energy-preserving 4x4 Hadamard matrix
                         const float a0 = y[0] + y[1];
                         const float a1_h = y[0] - y[1];
                         const float a2_h = y[2] + y[3];
@@ -442,7 +499,6 @@ public:
                             0.5f * (a1_h - a3_h)
                         };
 
-                        // Octave-up (+12st) dual-tap Hann-windowed Glimmer from delayBuffers[c][0]
                         shimmerPhase[c] += shimmerInc;
                         if (shimmerPhase[c] >= 1.0f)
                             shimmerPhase[c] -= 1.0f;
@@ -461,7 +517,6 @@ public:
                         const float w2 = 1.0f - w1;
                         const float shimmerSig = (s1 * w1 + s2 * w2) * (spr * 0.34f);
 
-                        // Sum FDN return + remove DC + soft SOMA limiter
                         const float fdnSum = 0.5f * (h[0] + h[1] + h[2] + h[3]);
                         const float hpOut = fdnSum - loopHpX1[c] + hpR * loopHpY1[c];
                         loopHpX1[c] = fdnSum;
@@ -472,16 +527,10 @@ public:
 
                         float excite = 0.0f;
                         if (inLoopRouting)
-                        {
                             excite = applyWaveshaper (ch, xIn + fbReturn, drv, chr);
-                        }
                         else
-                        {
-                            const float shaped = applyWaveshaper (ch, xIn, drv, chr);
-                            excite = shaped;
-                        }
+                            excite = applyWaveshaper (ch, xIn, drv, chr);
 
-                        // Inject excitation + Hadamard feedback + subtle octave shimmer into all 4 FDN tanks
                         const float fdnFbGain = fbSigned * 0.94f;
                         for (size_t v = 0; v < numVoices; ++v)
                         {
@@ -497,10 +546,8 @@ public:
                         wetSignal = inLoopRouting ? excite : (excite + fbReturn * loopActive);
                     }
 
-                    // Apply dedicated Loop Level trim smoothly only when Loop is ON
-                    wetSignal *= loopGain;
+                    wetSignal *= inLoopTrim;
 
-                    // Gentle 1-pole DC blocker on output path
                     const float dcR = 0.9992f;
                     const float dcY = wetSignal - dcPrevX[c] + dcR * dcPrevY[c];
                     dcPrevX[c] = wetSignal;
@@ -512,7 +559,6 @@ public:
 
             oversampler->processSamplesDown (subBlock);
 
-            // Wet-only gain & soft ceiling; Dry stays 100% untouched
             for (int i = 0; i < subLen; ++i)
             {
                 const size_t si = static_cast<size_t> (i);
@@ -721,7 +767,12 @@ private:
 
     Mode currentMode = Mode::BuchlaSoma;
     LoopEngine currentLoopEngine = LoopEngine::String;
+    EnvTarget currentEnvTarget = EnvTarget::Off;
     bool inLoopRouting = false;
+
+    float envReleaseMsCurrent = 140.0f;
+    float envState = 0.0f;
+    float lastEnvelopeOut = 0.0f;
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     juce::dsp::StateVariableTPTFilter<float> preFilter;
@@ -735,7 +786,8 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> spreadSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> polaritySmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> loopBypassSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> loopTrimSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> inLoopTrimSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> envAmountSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> mixSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wetGainSmooth;
 
