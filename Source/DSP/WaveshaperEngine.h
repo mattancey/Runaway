@@ -20,24 +20,28 @@ public:
     };
 
     static constexpr int maxChannels = 2;
-    static constexpr int dryDelayBufferSize = 64;
+    static constexpr int maxSubBlock = 64;
+    static constexpr int dryDelayBufferSize = 512;
 
     void prepare (double sampleRate, int maxBlockSize, int numChannels)
     {
         hostSampleRate = std::max (1000.0, sampleRate);
         activeChannels = juce::jlimit (1, maxChannels, numChannels);
 
-        // 4x oversampling (2^2 = 4) using polyphase half-band IIR for minimum latency & steep stopband
+        // 4x oversampling (2^2 = 4) using linear-phase equiripple FIR with integer latency
+        // so Dry and Wet paths remain 100% phase-coherent at every Mix setting.
         oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
             static_cast<size_t> (activeChannels),
             2,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
+            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple,
             true,
-            false);
+            true);
 
         oversampler->initProcessing (static_cast<size_t> (std::max (1, maxBlockSize)));
         oversampledRate = hostSampleRate * static_cast<double> (oversampler->getOversamplingFactor());
-        latencySamples = juce::jlimit (0, dryDelayBufferSize - 1,
+
+        constexpr int maxSafeLatency = dryDelayBufferSize - maxSubBlock - 1;
+        latencySamples = juce::jlimit (0, maxSafeLatency,
                                        juce::roundToInt (oversampler->getLatencyInSamples()));
 
         juce::dsp::ProcessSpec hostSpec;
@@ -105,8 +109,9 @@ public:
 
         const int numSamples = buffer.getNumSamples();
         const int numChannels = std::min (activeChannels, buffer.getNumChannels());
+        if (numChannels <= 0)
+            return;
 
-        constexpr int maxSubBlock = 64;
         int sampleOffset = 0;
 
         while (sampleOffset < numSamples)
@@ -143,7 +148,8 @@ public:
             }
 
             juce::dsp::AudioBlock<float> fullBlock (buffer);
-            auto subBlock = fullBlock.getSubBlock (static_cast<size_t> (sampleOffset),
+            auto subBlock = fullBlock.getSubsetChannelBlock (0, static_cast<size_t> (numChannels))
+                                     .getSubBlock (static_cast<size_t> (sampleOffset),
                                                    static_cast<size_t> (subLen));
             auto osBlock = oversampler->processSamplesUp (subBlock);
 
