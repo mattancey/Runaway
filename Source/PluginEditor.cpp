@@ -1,5 +1,3 @@
-// Fichier: Source/PluginEditor.cpp
-
 #include "PluginEditor.h"
 
 void RunawayLookAndFeel::drawRotarySlider (juce::Graphics& g,
@@ -79,6 +77,19 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
 
     auto& apvts = audioProcessor.getAPVTS();
 
+    presetSelector.addItemList (RunawayAudioProcessor::getFactoryPresetNames(), 1);
+    presetSelector.setTextWhenNothingSelected ("PRESETS...");
+    presetSelector.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff1a1d24));
+    presetSelector.setColour (juce::ComboBox::outlineColourId, juce::Colour (0xff323846));
+    presetSelector.setColour (juce::ComboBox::textColourId, juce::Colour (0xffcfd6e6));
+    presetSelector.onChange = [this]
+    {
+        const int sel = presetSelector.getSelectedId() - 1;
+        if (sel >= 0)
+            audioProcessor.loadFactoryPreset (sel);
+    };
+    addAndMakeVisible (presetSelector);
+
     modeSelector.addItemList ({
         "BUCHLA / SOMA  —  259 Folder + Harvezi Spoil",
         "BIFOLD MORPH   —  Buchla Parallel <-> Serge Serial",
@@ -100,6 +111,18 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     loopEngineSelector.setColour (juce::ComboBox::textColourId, juce::Colour (0xffe8ecf4));
     addAndMakeVisible (loopEngineSelector);
 
+    envTargetSelector.addItemList ({
+        "TARGET: OFF",
+        "TARGET: DRIVE / FOLD",
+        "TARGET: CHARACTER",
+        "TARGET: LOOP LPF",
+        "TARGET: RESO PITCH"
+    }, 1);
+    envTargetSelector.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff181b22));
+    envTargetSelector.setColour (juce::ComboBox::outlineColourId, juce::Colour (0xff323846));
+    envTargetSelector.setColour (juce::ComboBox::textColourId, juce::Colour (0xffe8ecf4));
+    addAndMakeVisible (envTargetSelector);
+
     configureKnob (preCutoffSlider, preCutoffLabel, "PRE-LPF");
     configureKnob (driveSlider, driveLabel, "DRIVE");
     configureKnob (characterSlider, characterLabel, "SPOIL");
@@ -110,7 +133,10 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     configureKnob (feedbackSlider, feedbackLabel, "FEEDBACK");
     configureKnob (loopCutoffSlider, loopCutoffLabel, "LOOP LPF");
     configureKnob (spreadSlider, spreadLabel, "BBD SPREAD");
-    configureKnob (loopLevelSlider, loopLevelLabel, "LOOP LEVEL");
+    configureKnob (loopLevelSlider, loopLevelLabel, "IN-LOOP LVL");
+
+    configureKnob (envAmountSlider, envAmountLabel, "ENV AMOUNT");
+    configureKnob (envReleaseSlider, envReleaseLabel, "ENV RELEASE");
 
     configureToggleButton (loopActiveButton);
     configureToggleButton (midiTrackButton);
@@ -119,6 +145,7 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
 
     modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, "mode", modeSelector);
     loopEngineAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, "loopEngine", loopEngineSelector);
+    envTargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (apvts, "envTarget", envTargetSelector);
 
     preCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "preCutoff", preCutoffSlider);
     driveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "drive", driveSlider);
@@ -131,6 +158,9 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     loopCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "loopCutoff", loopCutoffSlider);
     spreadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "spread", spreadSlider);
     loopLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "loopLevel", loopLevelSlider);
+
+    envAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "envAmount", envAmountSlider);
+    envReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "envRelease", envReleaseSlider);
 
     loopActiveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, "loopActive", loopActiveButton);
     midiTrackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, "midiTrack", midiTrackButton);
@@ -154,7 +184,7 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     updateModeAesthetics();
     updateLoopEngineLabels();
     updateButtonLabels();
-    setSize (820, 585);
+    setSize (840, 690);
     startTimerHz (30);
 }
 
@@ -191,6 +221,7 @@ void RunawayAudioProcessorEditor::configureToggleButton (juce::TextButton& butto
 void RunawayAudioProcessorEditor::updateButtonLabels()
 {
     const bool loopOn = loopActiveButton.getToggleState();
+    const bool inLoopOn = loopModeButton.getToggleState();
     loopActiveButton.setButtonText (loopOn ? "LOOP: ON" : "LOOP: BYPASS");
 
     const float midiHz = audioProcessor.getActiveMidiFreqHz();
@@ -206,14 +237,22 @@ void RunawayAudioProcessorEditor::updateButtonLabels()
     }
 
     polarityButton.setButtonText (polarityButton.getToggleState() ? "POL: - HOLLOW" : "POL: + STRING");
-    loopModeButton.setButtonText (loopModeButton.getToggleState() ? "ROUTING: IN-LOOP" : "ROUTING: PRE");
+    loopModeButton.setButtonText (inLoopOn ? "ROUTING: IN-LOOP" : "ROUTING: PRE");
 
-    const float dimAlpha = loopOn ? 1.0f : 0.45f;
-    pitchSlider.setAlpha (dimAlpha);
-    feedbackSlider.setAlpha (dimAlpha);
-    loopCutoffSlider.setAlpha (dimAlpha);
-    spreadSlider.setAlpha (dimAlpha);
-    loopLevelSlider.setAlpha (dimAlpha);
+    const float loopDim = loopOn ? 1.0f : 0.42f;
+    pitchSlider.setAlpha (loopDim);
+    feedbackSlider.setAlpha (loopDim);
+    loopCutoffSlider.setAlpha (loopDim);
+    spreadSlider.setAlpha (loopDim);
+
+    const float inLoopDim = (loopOn && inLoopOn) ? 1.0f : 0.38f;
+    loopLevelSlider.setAlpha (inLoopDim);
+    loopLevelLabel.setAlpha (inLoopDim);
+
+    const bool envActive = (envTargetSelector.getSelectedId() > 1);
+    const float envDim = envActive ? 1.0f : 0.50f;
+    envAmountSlider.setAlpha (envDim);
+    envReleaseSlider.setAlpha (envDim);
 }
 
 void RunawayAudioProcessorEditor::updateLoopEngineLabels()
@@ -288,8 +327,13 @@ void RunawayAudioProcessorEditor::timerCallback()
     updateModeAesthetics();
     updateLoopEngineLabels();
     updateButtonLabels();
+
+    const float targetEnv = audioProcessor.getEnvelopeMeterLevel();
+    envMeterSmooth = envMeterSmooth * 0.65f + targetEnv * 0.35f;
+
     audioProcessor.readScopeData (dryScope, wetScope);
     repaint (scopeBounds);
+    repaint (envMeterBounds);
 }
 
 void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
@@ -305,11 +349,11 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colour (0xfff0f3fa));
     g.setFont (juce::Font (juce::FontOptions (21.0f, juce::Font::bold)));
-    g.drawText ("RUNAWAY", 20, 10, 160, 26, juce::Justification::centredLeft);
+    g.drawText ("RUNAWAY", 20, 10, 140, 26, juce::Justification::centredLeft);
 
     g.setColour (lookAndFeel.getAccentColour());
-    g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-    g.drawText ("STAGE 3  •  4x WAVESHAPER + BBD / CHORD / NIGHTSKY FDN", 20, 34, 400, 14, juce::Justification::centredLeft);
+    g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    g.drawText ("4x WAVESHAPER • ECHON 6 / NIGHTSKY / ANALOG HEAT", 20, 34, 340, 14, juce::Justification::centredLeft);
 
     const auto sf = scopeBounds.toFloat();
     g.setColour (juce::Colour (0xff090b0f));
@@ -379,10 +423,34 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
                 row2Bounds.getX() + 14, row2Bounds.getY() + 14, 90, 18,
                 juce::Justification::centredLeft);
 
-    g.setColour (juce::Colour (0xff596275));
-    g.setFont (juce::Font (juce::FontOptions (10.5f)));
-    g.drawText ("NEXT STAGE (STEP 4):  Analog Heat Envelope Follower  +  SOMA Drift  +  Preset Manager",
-                20, getHeight() - 22, getWidth() - 40, 16, juce::Justification::centred);
+    const auto ef = row3Bounds.toFloat();
+    g.setColour (juce::Colour (0xff13161d));
+    g.fillRoundedRectangle (ef, 8.0f);
+    g.setColour (juce::Colour (0xff232833));
+    g.drawRoundedRectangle (ef, 8.0f, 1.0f);
+
+    g.setColour (juce::Colour (0xff6b7488));
+    g.drawText ("ENV FOLLOWER  (ANALOG HEAT)",
+                row3Bounds.getX() + 14, row3Bounds.getY() + 10, 210, 16,
+                juce::Justification::centredLeft);
+
+    const auto mf = envMeterBounds.toFloat();
+    g.setColour (juce::Colour (0xff090b0f));
+    g.fillRoundedRectangle (mf, 4.0f);
+    g.setColour (juce::Colour (0xff252a36));
+    g.drawRoundedRectangle (mf, 4.0f, 1.0f);
+
+    const float fillW = std::max (0.0f, (mf.getWidth() - 4.0f) * juce::jlimit (0.0f, 1.0f, envMeterSmooth));
+    if (fillW > 1.0f)
+    {
+        g.setColour (lookAndFeel.getAccentColour().withAlpha (0.85f));
+        g.fillRoundedRectangle (mf.getX() + 2.0f, mf.getY() + 2.0f, fillW, mf.getHeight() - 4.0f, 3.0f);
+    }
+
+    g.setColour (juce::Colour (0xff677085));
+    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    g.drawText ("ENV ACTIVITY", envMeterBounds.getX(), envMeterBounds.getY() - 16, envMeterBounds.getWidth(), 14,
+                juce::Justification::centredLeft);
 }
 
 void RunawayAudioProcessorEditor::resized()
@@ -390,16 +458,17 @@ void RunawayAudioProcessorEditor::resized()
     auto area = getLocalBounds();
 
     auto header = area.removeFromTop (56);
-    modeSelector.setBounds (header.removeFromRight (380).reduced (16, 12));
+    auto headerRight = header.removeFromRight (535).reduced (14, 12);
+    presetSelector.setBounds (headerRight.removeFromLeft (185));
+    headerRight.removeFromLeft (8);
+    modeSelector.setBounds (headerRight);
 
     area.reduce (20, 12);
-    area.removeFromBottom (20);
 
-    scopeBounds = area.removeFromTop (120);
-    area.removeFromTop (12);
+    scopeBounds = area.removeFromTop (112);
+    area.removeFromTop (10);
 
-    // Row 1: 5 knobs (Shaper + Master)
-    auto row1 = area.removeFromTop (136);
+    auto row1 = area.removeFromTop (128);
     const int col1W = area.getWidth() / 5;
 
     auto placeKnob1 = [&] (int index, juce::Slider& s, juce::Label& l)
@@ -417,21 +486,18 @@ void RunawayAudioProcessorEditor::resized()
 
     area.removeFromTop (10);
 
-    // Row 2: Loop Engine container
-    row2Bounds = area;
+    row2Bounds = area.removeFromTop (186);
     auto innerRow2 = row2Bounds.reduced (10, 8);
 
-    // Top bar inside Loop container: Loop Engine selector + MIDI Track + Loop ON/OFF
     auto loopTopBar = innerRow2.removeFromTop (30);
-    loopTopBar.removeFromLeft (94); // space for "LOOP ENGINE" label
+    loopTopBar.removeFromLeft (94);
     loopEngineSelector.setBounds (loopTopBar.removeFromLeft (270).reduced (0, 2));
     loopActiveButton.setBounds (loopTopBar.removeFromRight (120).reduced (2, 1));
     loopTopBar.removeFromRight (8);
     midiTrackButton.setBounds (loopTopBar.removeFromRight (120).reduced (2, 1));
 
-    innerRow2.removeFromTop (10);
+    innerRow2.removeFromTop (8);
 
-    // 6 columns: 5 knobs + 1 toggle stack
     const int col2W = innerRow2.getWidth() / 6;
     auto placeKnob2 = [&] (int index, juce::Slider& s, juce::Label& l)
     {
@@ -450,4 +516,28 @@ void RunawayAudioProcessorEditor::resized()
     polarityButton.setBounds (toggleCol.removeFromTop (38));
     toggleCol.removeFromTop (10);
     loopModeButton.setBounds (toggleCol.removeFromTop (38));
+
+    area.removeFromTop (10);
+
+    row3Bounds = area;
+    auto innerRow3 = row3Bounds.reduced (14, 10);
+
+    auto envLeftCol = innerRow3.removeFromLeft (220);
+    envLeftCol.removeFromTop (24);
+    envTargetSelector.setBounds (envLeftCol.removeFromTop (30));
+
+    innerRow3.removeFromLeft (16);
+
+    auto placeEnvKnob = [&] (juce::Rectangle<int> slot, juce::Slider& s, juce::Label& l)
+    {
+        l.setBounds (slot.removeFromTop (16));
+        s.setBounds (slot.reduced (4, 0));
+    };
+
+    placeEnvKnob (innerRow3.removeFromLeft (130), envAmountSlider, envAmountLabel);
+    innerRow3.removeFromLeft (8);
+    placeEnvKnob (innerRow3.removeFromLeft (130), envReleaseSlider, envReleaseLabel);
+
+    innerRow3.removeFromLeft (20);
+    envMeterBounds = innerRow3.withSizeKeepingCentre (innerRow3.getWidth(), 18).translated (0, 8);
 }
