@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <memory>
+#include <cstdint>
 
 namespace runaway::dsp
 {
@@ -36,11 +37,61 @@ public:
         Pitch
     };
 
+    enum class LpgMode : int
+    {
+        Off = 0,
+        Both,           // Buchla 292 classic Low Pass Gate (Filter + VCA coupled)
+        VcaOnly,        // Pure Vactrol amplitude pluck
+        FilterOnly      // Pure Vactrol resonant lowpass sweep
+    };
+
     static constexpr int maxChannels = 2;
     static constexpr int numVoices = 4;
     static constexpr int maxSubBlock = 64;
     static constexpr int dryDelayBufferSize = 512;
     static constexpr int shimmerWindowSize = 2048;
+
+    // Stateless preview helper for UI Transfer Curve X/Y visualization (message thread only)
+    static float evalTransferPreview (int modeIndex, float x, float driveNorm, float charNorm) noexcept
+    {
+        const Mode m = static_cast<Mode> (juce::jlimit (0, 3, modeIndex));
+        const float drv = juce::jlimit (0.0f, 1.0f, driveNorm);
+        const float chr = juce::jlimit (0.0f, 1.0f, charNorm);
+
+        switch (m)
+        {
+            case Mode::BuchlaSoma:
+            {
+                const float thr = chr * 0.28f;
+                const float mag = std::abs (x);
+                const float gate = (thr > 1.0e-5f) ? (mag * mag) / (mag * mag + thr * thr) : 1.0f;
+                const float driven = (x * gate) * (1.0f + drv * 8.5f) + chr * 0.32f;
+                return buchla259ParallelFold (driven);
+            }
+
+            case Mode::BifoldMorph:
+            {
+                const float buchlaOut = buchla259ParallelFold (x * (1.0f + drv * 7.5f));
+                const float sergeOut = sergeSerialFold (x, drv);
+                const float gB = std::cos (chr * juce::MathConstants<float>::halfPi);
+                const float gS = std::sin (chr * juce::MathConstants<float>::halfPi);
+                return (gB * buchlaOut + gS * sergeOut) * 0.95f;
+            }
+
+            case Mode::EricaXeno:
+            {
+                const float driven = x * (1.0f + drv * 15.0f) + (0.08f + chr * 0.35f);
+                return std::tanh (driven);
+            }
+
+            case Mode::Werner112dB:
+            default:
+            {
+                const float driven = x * (1.0f + drv * 6.5f);
+                return std::tanh (driven * (0.95f + chr * 0.65f));
+            }
+        }
+    }
 
     void prepare (double sampleRate, int maxBlockSize, int numChannels)
     {
@@ -90,6 +141,7 @@ public:
         loopBypassSmooth.reset (hostSampleRate, 0.025);
         inLoopTrimSmooth.reset (hostSampleRate, 0.020);
         envAmountSmooth.reset (hostSampleRate, 0.020);
+        lpgResSmooth.reset (hostSampleRate, 0.020);
 
         reset();
     }
@@ -115,6 +167,8 @@ public:
             loopLp6State[ch] = 0.0f;
             loopHpX1[ch] = 0.0f;
             loopHpY1[ch] = 0.0f;
+            lpgIc1[ch] = 0.0f;
+            lpgIc2[ch] = 0.0f;
             shimmerPhase[ch] = (ch == 0) ? 0.0f : 0.25f;
             dryRing[ch].fill (0.0f);
 
@@ -131,11 +185,16 @@ public:
         lfoPhase[1] = 0.37f;
         envState = 0.0f;
         lastEnvelopeOut = 0.0f;
+        vactrolFastEnv = 0.0f;
+        vactrolSlowEnv = 0.0f;
+        lastVactrolLevel = 0.0f;
+        lastMidiStrikeCounter = 0;
         dryWritePos = 0;
     }
 
     int getLatencySamples() const noexcept { return latencySamples; }
     float getLastEnvelopeLevel() const noexcept { return lastEnvelopeOut; }
+    float getLastVactrolLevel() const noexcept { return lastVactrolLevel; }
 
     void setParameters (int modeIndex,
                         int loopEngineIndex,
@@ -153,17 +212,28 @@ public:
                         int envTargetIndex,
                         float envAmountSigned,
                         float envReleaseMs,
+                        int lpgModeIndex,
+                        float lpgDecayMs,
+                        float lpgResNorm,
+                        uint32_t midiStrikeCounter,
                         float mixNorm,
                         float wetLevelDb) noexcept
     {
         currentMode = static_cast<Mode> (juce::jlimit (0, 3, modeIndex));
         currentLoopEngine = static_cast<LoopEngine> (juce::jlimit (0, 2, loopEngineIndex));
         currentEnvTarget = static_cast<EnvTarget> (juce::jlimit (0, 4, envTargetIndex));
+        currentLpgMode = static_cast<LpgMode> (juce::jlimit (0, 3, lpgModeIndex));
         inLoopRouting = shaperInLoop;
+
+        if (midiStrikeCounter != lastMidiStrikeCounter)
+        {
+            lastMidiStrikeCounter = midiStrikeCounter;
+            vactrolFastEnv = 1.0f;
+            vactrolSlowEnv = std::max (vactrolSlowEnv, 0.85f);
+        }
 
         loopBypassSmooth.setTargetValue (loopEnabled ? 1.0f : 0.0f);
 
-        // IN-LOOP LVL only engages when BOTH Loop is ON and Routing is IN-LOOP
         const float inLoopTrimTarget = (loopEnabled && shaperInLoop)
             ? juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, inLoopLevelDb))
             : 1.0f;
@@ -179,6 +249,8 @@ public:
         polaritySmooth.setTargetValue (invertPolarity ? -1.0f : 1.0f);
         envAmountSmooth.setTargetValue (juce::jlimit (-1.0f, 1.0f, envAmountSigned));
         envReleaseMsCurrent = juce::jlimit (20.0f, 600.0f, envReleaseMs);
+        lpgDecayMsCurrent = juce::jlimit (40.0f, 1200.0f, lpgDecayMs);
+        lpgResSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, lpgResNorm));
         mixSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, mixNorm));
         wetGainSmooth.setTargetValue (juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, wetLevelDb)));
     }
@@ -204,6 +276,12 @@ public:
         const float envAttCoeff = std::exp (-1.0f / (0.003f * hostRateF));
         const float envRelCoeff = std::exp (-1.0f / ((envReleaseMsCurrent * 0.001f) * hostRateF));
 
+        // Dual-stage vactrol time constants (fast strike, organic asymmetric tail)
+        const float vactrolAttFast = std::exp (-1.0f / (0.0018f * hostRateF));
+        const float vactrolAttSlow = std::exp (-1.0f / (0.0065f * hostRateF));
+        const float vactrolDecFast = std::exp (-1.0f / ((lpgDecayMsCurrent * 0.00075f) * hostRateF));
+        const float vactrolDecSlow = std::exp (-1.0f / ((lpgDecayMsCurrent * 0.00155f) * hostRateF));
+
         static constexpr std::array<float, numVoices> chordPitchRatios { 1.0f, 1.498307f, 1.189207f, 2.0f };
         static constexpr std::array<float, numVoices> fdnRatios { 1.0f, 1.317f, 1.733f, 2.219f };
 
@@ -226,6 +304,8 @@ public:
             std::array<float, maxSubBlock> loopA3Sub {};
             std::array<float, maxSubBlock> lp6AlphaSub {};
             std::array<float, maxSubBlock> fdnLpAlphaSub {};
+            std::array<float, maxSubBlock> lpgCvSub {};
+            std::array<float, maxSubBlock> lpgResSub {};
             std::array<float, maxSubBlock> mixSub {};
             std::array<float, maxSubBlock> wetGainSub {};
 
@@ -250,6 +330,25 @@ public:
 
                 const float envNorm = juce::jlimit (0.0f, 1.0f, envState * 1.45f);
                 lastEnvelopeOut = envNorm;
+
+                // Vactrol optical photoresistor response
+                const float lpgRes = lpgResSmooth.getNextValue();
+                const float strikeDrive = juce::jlimit (0.0f, 1.0f, peakIn * (1.45f + lpgRes * 1.15f));
+
+                if (strikeDrive > vactrolFastEnv)
+                    vactrolFastEnv = vactrolAttFast * vactrolFastEnv + (1.0f - vactrolAttFast) * strikeDrive;
+                else
+                    vactrolFastEnv = vactrolDecFast * vactrolFastEnv + (1.0f - vactrolDecFast) * strikeDrive;
+
+                if (strikeDrive > vactrolSlowEnv)
+                    vactrolSlowEnv = vactrolAttSlow * vactrolSlowEnv + (1.0f - vactrolAttSlow) * strikeDrive;
+                else
+                    vactrolSlowEnv = vactrolDecSlow * vactrolSlowEnv + (1.0f - vactrolDecSlow) * strikeDrive;
+
+                const float vactrolCV = juce::jlimit (0.0f, 1.0f, 0.58f * vactrolFastEnv + 0.42f * vactrolSlowEnv);
+                lastVactrolLevel = (currentLpgMode == LpgMode::Off) ? 0.0f : vactrolCV;
+                lpgCvSub[si] = vactrolCV;
+                lpgResSub[si] = lpgRes;
 
                 const float cutoff = preCutoffSmooth.getNextValue();
                 preFilter.setCutoffFrequency (cutoff);
@@ -559,20 +658,52 @@ public:
 
             oversampler->processSamplesDown (subBlock);
 
+            // Apply Buchla 292 Vactrol LPG on Wet path, then Wet Level & Dry/Wet Mix
             for (int i = 0; i < subLen; ++i)
             {
                 const size_t si = static_cast<size_t> (i);
                 const int sIdx = sampleOffset + i;
                 const float mix = mixSub[si];
                 const float wetGain = wetGainSub[si];
+                const float cv = lpgCvSub[si];
+                const float res = lpgResSub[si];
+
+                const float cvCurve = cv * (0.30f + 0.70f * cv);
+                const float lpgFc = juce::jlimit (100.0f, 0.43f * hostRateF, 110.0f + cvCurve * 15500.0f);
+                const float lpgG = std::tan (juce::MathConstants<float>::pi * lpgFc / hostRateF);
+                const float lpgK = 1.414f - res * 1.05f;
+                const float lpgA1 = 1.0f / (1.0f + lpgG * (lpgG + lpgK));
+                const float lpgA2 = lpgG * lpgA1;
+                const float lpgA3 = lpgG * lpgA2;
+                const float vcaGain = cv * (0.40f + 0.60f * cv);
 
                 const int readIdx = (dryWritePos - subLen + i - latencySamples + dryDelayBufferSize * 2)
                                     % dryDelayBufferSize;
 
                 for (int ch = 0; ch < numChannels; ++ch)
                 {
-                    const float dry = dryRing[static_cast<size_t> (ch)][static_cast<size_t> (readIdx)];
-                    float wet = buffer.getSample (ch, sIdx) * wetGain;
+                    const size_t c = static_cast<size_t> (ch);
+                    const float dry = dryRing[c][static_cast<size_t> (readIdx)];
+                    float wet = buffer.getSample (ch, sIdx);
+
+                    // Run 12dB TPT LPG filter continuously when LPG != Off to keep filter state warm
+                    if (currentLpgMode != LpgMode::Off)
+                    {
+                        const float v3 = wet - lpgIc2[c];
+                        const float v1 = lpgA1 * lpgIc1[c] + lpgA2 * v3;
+                        const float v2 = lpgIc2[c] + lpgA2 * lpgIc1[c] + lpgA3 * v3;
+                        lpgIc1[c] = 2.0f * v1 - lpgIc1[c];
+                        lpgIc2[c] = 2.0f * v2 - lpgIc2[c];
+
+                        if (currentLpgMode == LpgMode::Both)
+                            wet = v2 * vcaGain;
+                        else if (currentLpgMode == LpgMode::VcaOnly)
+                            wet = wet * vcaGain;
+                        else
+                            wet = v2;
+                    }
+
+                    wet *= wetGain;
 
                     if (std::abs (wet) > 1.0f)
                         wet = std::tanh (wet * 0.85f) / 0.85f;
@@ -768,11 +899,18 @@ private:
     Mode currentMode = Mode::BuchlaSoma;
     LoopEngine currentLoopEngine = LoopEngine::String;
     EnvTarget currentEnvTarget = EnvTarget::Off;
+    LpgMode currentLpgMode = LpgMode::Off;
     bool inLoopRouting = false;
 
     float envReleaseMsCurrent = 140.0f;
     float envState = 0.0f;
     float lastEnvelopeOut = 0.0f;
+
+    float lpgDecayMsCurrent = 280.0f;
+    float vactrolFastEnv = 0.0f;
+    float vactrolSlowEnv = 0.0f;
+    float lastVactrolLevel = 0.0f;
+    uint32_t lastMidiStrikeCounter = 0;
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     juce::dsp::StateVariableTPTFilter<float> preFilter;
@@ -788,6 +926,7 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> loopBypassSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> inLoopTrimSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> envAmountSmooth;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> lpgResSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> mixSmooth;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wetGainSmooth;
 
@@ -804,6 +943,8 @@ private:
     std::array<float, maxChannels> loopLp6State {};
     std::array<float, maxChannels> loopHpX1 {};
     std::array<float, maxChannels> loopHpY1 {};
+    std::array<float, maxChannels> lpgIc1 {};
+    std::array<float, maxChannels> lpgIc2 {};
     std::array<float, maxChannels> lfoPhase {};
     std::array<float, maxChannels> shimmerPhase {};
 
