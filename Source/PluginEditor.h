@@ -1,104 +1,118 @@
-// Fichier: Source/PluginProcessor.h
+// Fichier: Source/PluginEditor.h
 
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include "DSP/WaveshaperEngine.h"
+#include <juce_gui_basics/juce_gui_basics.h>
+#include "PluginProcessor.h"
 #include <array>
-#include <atomic>
+#include <memory>
 
-class RunawayAudioProcessor final : public juce::AudioProcessor,
-                                    private juce::AudioProcessorValueTreeState::Listener,
-                                    private juce::AsyncUpdater
+class RunawayLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
-    static constexpr int scopeBufferSize = 512;
-    static constexpr int numModes = 4;
-    static constexpr int numPerModeParams = 13;
+    void setAccentColour (juce::Colour c) noexcept { accent = c; }
+    juce::Colour getAccentColour() const noexcept { return accent; }
 
-    RunawayAudioProcessor();
-    ~RunawayAudioProcessor() override;
+    void drawRotarySlider (juce::Graphics& g,
+                           int x, int y, int width, int height,
+                           float sliderPosProportional,
+                           float rotaryStartAngle,
+                           float rotaryEndAngle,
+                           juce::Slider& slider) override;
 
-    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override;
-
-    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
-    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
-    using AudioProcessor::processBlock;
-
-    juce::AudioProcessorEditor* createEditor() override;
-    bool hasEditor() const override;
-
-    const juce::String getName() const override;
-
-    bool acceptsMidi() const override;
-    bool producesMidi() const override;
-    bool isMidiEffect() const override;
-    double getTailLengthSeconds() const override;
-
-    int getNumPrograms() override;
-    int getCurrentProgram() override;
-    void setCurrentProgram (int index) override;
-    const juce::String getProgramName (int index) override;
-    void changeProgramName (int index, const juce::String& newName) override;
-
-    void getStateInformation (juce::MemoryBlock& destData) override;
-    void setStateInformation (const void* data, int sizeInBytes) override;
-
-    juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
-
-    void readScopeData (std::array<float, scopeBufferSize>& dryOut,
-                        std::array<float, scopeBufferSize>& wetOut) const noexcept;
-
-    float getActiveMidiFreqHz() const noexcept
-    {
-        return hasMidiNote.load (std::memory_order_relaxed)
-            ? midiNoteFreqHz.load (std::memory_order_relaxed)
-            : 0.0f;
-    }
+    void drawButtonBackground (juce::Graphics& g,
+                               juce::Button& button,
+                               const juce::Colour& backgroundColour,
+                               bool shouldDrawButtonAsHighlighted,
+                               bool shouldDrawButtonAsDown) override;
 
 private:
-    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    static const std::array<const char*, numPerModeParams>& getPerModeParamIds() noexcept;
+    juce::Colour accent { 0xffff7a2f };
+};
 
-    void parameterChanged (const juce::String& parameterID, float newValue) override;
-    void handleAsyncUpdate() override;
-    void applyModeSwitch (int nextMode);
-    void initDefaultModePresets();
+class RunawayAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                          private juce::Timer
+{
+public:
+    explicit RunawayAudioProcessorEditor (RunawayAudioProcessor& processor);
+    ~RunawayAudioProcessorEditor() override;
 
-    juce::AudioProcessorValueTreeState apvts;
+    void paint (juce::Graphics& g) override;
+    void resized() override;
 
-    std::atomic<float>* modeParam = nullptr;
-    std::atomic<float>* preCutoffParam = nullptr;
-    std::atomic<float>* driveParam = nullptr;
-    std::atomic<float>* characterParam = nullptr;
-    std::atomic<float>* loopEngineParam = nullptr;
-    std::atomic<float>* loopActiveParam = nullptr;
-    std::atomic<float>* loopLevelParam = nullptr;
-    std::atomic<float>* pitchParam = nullptr;
-    std::atomic<float>* feedbackParam = nullptr;
-    std::atomic<float>* loopCutoffParam = nullptr;
-    std::atomic<float>* spreadParam = nullptr;
-    std::atomic<float>* polarityParam = nullptr;
-    std::atomic<float>* inLoopParam = nullptr;
-    std::atomic<float>* midiTrackParam = nullptr;
-    std::atomic<float>* mixParam = nullptr;
-    std::atomic<float>* outputParam = nullptr;
+private:
+    void timerCallback() override;
+    void updateModeAesthetics();
+    void updateLoopEngineLabels();
+    void updateButtonLabels();
+    void configureKnob (juce::Slider& slider, juce::Label& title, const juce::String& text);
+    void configureToggleButton (juce::TextButton& button);
 
-    std::array<std::array<std::atomic<float>, numPerModeParams>, numModes> modePresets {};
-    std::atomic<int> activeModeIndex { 0 };
-    std::atomic<int> pendingModeIndex { 0 };
-    std::atomic<bool> isRecallingMode { false };
+    RunawayAudioProcessor& audioProcessor;
+    RunawayLookAndFeel lookAndFeel;
 
-    std::atomic<float> midiNoteFreqHz { 110.0f };
-    std::atomic<bool> hasMidiNote { false };
+    juce::ComboBox modeSelector;
+    juce::ComboBox loopEngineSelector;
 
-    runaway::dsp::WaveshaperEngine waveshaperEngine;
+    // Row 1: Waveshaper + Master
+    juce::Slider preCutoffSlider;
+    juce::Slider driveSlider;
+    juce::Slider characterSlider;
+    juce::Slider mixSlider;
+    juce::Slider outputSlider;
 
-    juce::AudioBuffer<float> scopeDryScratch;
-    std::array<std::atomic<float>, scopeBufferSize> scopeDryRing {};
-    std::array<std::atomic<float>, scopeBufferSize> scopeWetRing {};
-    std::atomic<int> scopeWritePos { 0 };
+    juce::Label preCutoffLabel;
+    juce::Label driveLabel;
+    juce::Label characterLabel;
+    juce::Label mixLabel;
+    juce::Label outputLabel;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RunawayAudioProcessor)
+    // Row 2: Loop Resonator / Chord / Diffuse + Dedicated Loop Level + Toggles
+    juce::Slider pitchSlider;
+    juce::Slider feedbackSlider;
+    juce::Slider loopCutoffSlider;
+    juce::Slider spreadSlider;
+    juce::Slider loopLevelSlider;
+
+    juce::Label pitchLabel;
+    juce::Label feedbackLabel;
+    juce::Label loopCutoffLabel;
+    juce::Label spreadLabel;
+    juce::Label loopLevelLabel;
+
+    juce::TextButton loopActiveButton;
+    juce::TextButton midiTrackButton;
+    juce::TextButton polarityButton;
+    juce::TextButton loopModeButton;
+
+    // Declare attachments AFTER UI components so they detach safely before destruction
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> loopEngineAttachment;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> preCutoffAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> driveAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> characterAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> feedbackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopCutoffAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> spreadAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopLevelAttachment;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> loopActiveAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> midiTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> polarityAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> loopModeAttachment;
+
+    juce::Rectangle<int> scopeBounds;
+    juce::Rectangle<int> row2Bounds;
+    std::array<float, RunawayAudioProcessor::scopeBufferSize> dryScope {};
+    std::array<float, RunawayAudioProcessor::scopeBufferSize> wetScope {};
+    int lastModeIndex = -1;
+    int lastLoopEngineIndex = -1;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RunawayAudioProcessorEditor)
 };
