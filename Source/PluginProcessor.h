@@ -12,7 +12,8 @@ class RunawayAudioProcessor final : public juce::AudioProcessor,
 public:
     static constexpr int scopeBufferSize = 512;
     static constexpr int numModes = 4;
-    static constexpr int numPerModeParams = 13;
+    static constexpr int numPerModeParams = 16;
+    static constexpr int numFactoryPresets = 8;
 
     RunawayAudioProcessor();
     ~RunawayAudioProcessor() override;
@@ -55,6 +56,14 @@ public:
             : 0.0f;
     }
 
+    float getEnvelopeMeterLevel() const noexcept
+    {
+        return envMeterLevel.load (std::memory_order_relaxed);
+    }
+
+    static juce::StringArray getFactoryPresetNames();
+    void loadFactoryPreset (int presetIndex);
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static const std::array<const char*, numPerModeParams>& getPerModeParamIds() noexcept;
@@ -80,6 +89,9 @@ private:
     std::atomic<float>* polarityParam = nullptr;
     std::atomic<float>* inLoopParam = nullptr;
     std::atomic<float>* midiTrackParam = nullptr;
+    std::atomic<float>* envTargetParam = nullptr;
+    std::atomic<float>* envAmountParam = nullptr;
+    std::atomic<float>* envReleaseParam = nullptr;
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
 
@@ -90,6 +102,7 @@ private:
 
     std::atomic<float> midiNoteFreqHz { 110.0f };
     std::atomic<bool> hasMidiNote { false };
+    std::atomic<float> envMeterLevel { 0.0f };
 
     runaway::dsp::WaveshaperEngine waveshaperEngine;
 
