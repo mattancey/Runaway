@@ -11,46 +11,50 @@ struct FactoryPresetData
     std::array<float, RunawayAudioProcessor::numPerModeParams> perMode;
 };
 
+// Order matches getPerModeParamIds():
+// preCutoff, drive, character, loopEngine, loopActive, loopLevel(inLoopLvl),
+// pitch, feedback, loopCutoff, spread, polarity, inLoop, output,
+// envTarget, envAmount, envRelease, lpgMode, lpgDecay, lpgRes
 static constexpr std::array<FactoryPresetData, RunawayAudioProcessor::numFactoryPresets> factoryPresets {{
     {
         "01  INIT / CLEAN FOLD",
         0, 100.0f,
-        { 14000.0f, 35.0f, 20.0f, 0.0f, 1.0f, 0.0f, 110.0f, 35.0f, 4500.0f, 25.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 140.0f }
+        { 14000.0f, 35.0f, 20.0f, 0.0f, 1.0f, 0.0f, 110.0f, 35.0f, 4500.0f, 25.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 140.0f, 0.0f, 280.0f, 35.0f }
     },
     {
-        "02  BUCHLA DRUM CRUSHER",
-        0, 82.0f,
-        { 12000.0f, 68.0f, 35.0f, 0.0f, 1.0f, -3.0f, 98.0f, 48.0f, 5200.0f, 30.0f, 0.0f, 0.0f, -1.5f, 1.0f, 55.0f, 95.0f }
+        "02  BUCHLA 292 BONGOS",
+        0, 88.0f,
+        { 13000.0f, 70.0f, 32.0f, 0.0f, 1.0f, -3.0f, 130.8f, 62.0f, 5800.0f, 30.0f, 0.0f, 0.0f, 1.5f, 1.0f, 45.0f, 95.0f, 1.0f, 210.0f, 68.0f }
     },
     {
         "03  SOMA TOTAL CHAOS",
         0, 90.0f,
-        { 9500.0f, 82.0f, 76.0f, 0.0f, 1.0f, -7.5f, 73.4f, 84.0f, 3100.0f, 45.0f, 1.0f, 1.0f, -2.0f, 2.0f, 65.0f, 180.0f }
+        { 9500.0f, 82.0f, 76.0f, 0.0f, 1.0f, -7.5f, 73.4f, 84.0f, 3100.0f, 45.0f, 1.0f, 1.0f, -2.0f, 2.0f, 65.0f, 180.0f, 0.0f, 280.0f, 35.0f }
     },
     {
         "04  BIFOLD HARMONIC MORPH",
         1, 88.0f,
-        { 16000.0f, 58.0f, 58.0f, 1.0f, 1.0f, -2.0f, 110.0f, 68.0f, 6200.0f, 82.0f, 0.0f, 0.0f, -1.0f, 3.0f, 45.0f, 160.0f }
+        { 16000.0f, 58.0f, 58.0f, 1.0f, 1.0f, -2.0f, 110.0f, 68.0f, 6200.0f, 82.0f, 0.0f, 0.0f, -1.0f, 3.0f, 45.0f, 160.0f, 0.0f, 320.0f, 40.0f }
     },
     {
         "05  ERICA XENO BASS",
         2, 92.0f,
-        { 11000.0f, 64.0f, 54.0f, 0.0f, 1.0f, -4.0f, 55.0f, 44.0f, 2400.0f, 18.0f, 0.0f, 0.0f, -3.5f, 1.0f, 40.0f, 110.0f }
+        { 11000.0f, 64.0f, 54.0f, 0.0f, 1.0f, -4.0f, 55.0f, 44.0f, 2400.0f, 18.0f, 0.0f, 0.0f, -3.5f, 1.0f, 40.0f, 110.0f, 0.0f, 260.0f, 30.0f }
     },
     {
         "06  ECHON 6 HOLLOW PIPE",
         3, 85.0f,
-        { 13000.0f, 46.0f, 62.0f, 0.0f, 1.0f, -3.0f, 146.8f, 82.0f, 3200.0f, 32.0f, 1.0f, 0.0f, -1.0f, 4.0f, 22.0f, 130.0f }
+        { 13000.0f, 46.0f, 62.0f, 0.0f, 1.0f, -3.0f, 146.8f, 82.0f, 3200.0f, 32.0f, 1.0f, 0.0f, -1.0f, 4.0f, 22.0f, 130.0f, 1.0f, 340.0f, 55.0f }
     },
     {
         "07  NIGHTSKY SHIMMER CLOUD",
         1, 68.0f,
-        { 15000.0f, 42.0f, 32.0f, 2.0f, 1.0f, -4.5f, 130.8f, 88.0f, 6500.0f, 76.0f, 0.0f, 0.0f, 0.0f, 3.0f, 35.0f, 320.0f }
+        { 15000.0f, 42.0f, 32.0f, 2.0f, 1.0f, -4.5f, 130.8f, 88.0f, 6500.0f, 76.0f, 0.0f, 0.0f, 0.0f, 3.0f, 35.0f, 320.0f, 0.0f, 450.0f, 25.0f }
     },
     {
-        "08  STUTTER DUCKING RESO",
-        2, 95.0f,
-        { 14000.0f, 56.0f, 32.0f, 1.0f, 1.0f, -5.0f, 73.4f, 78.0f, 7500.0f, 70.0f, 1.0f, 1.0f, -2.0f, 3.0f, -75.0f, 150.0f }
+        "08  OPTOMIX CHOKED PLUCK",
+        2, 94.0f,
+        { 14000.0f, 60.0f, 42.0f, 1.0f, 1.0f, -5.0f, 82.4f, 76.0f, 7200.0f, 65.0f, 1.0f, 1.0f, 1.0f, 3.0f, -65.0f, 130.0f, 1.0f, 145.0f, 78.0f }
     }
 }};
 } // namespace
@@ -60,7 +64,8 @@ const std::array<const char*, RunawayAudioProcessor::numPerModeParams>& RunawayA
     static constexpr std::array<const char*, numPerModeParams> ids {
         "preCutoff", "drive", "character", "loopEngine", "loopActive",
         "loopLevel", "pitch", "feedback", "loopCutoff", "spread",
-        "polarity", "inLoop", "output", "envTarget", "envAmount", "envRelease"
+        "polarity", "inLoop", "output", "envTarget", "envAmount", "envRelease",
+        "lpgMode", "lpgDecay", "lpgRes"
     };
     return ids;
 }
@@ -88,6 +93,9 @@ RunawayAudioProcessor::RunawayAudioProcessor()
     envTargetParam = apvts.getRawParameterValue ("envTarget");
     envAmountParam = apvts.getRawParameterValue ("envAmount");
     envReleaseParam = apvts.getRawParameterValue ("envRelease");
+    lpgModeParam = apvts.getRawParameterValue ("lpgMode");
+    lpgDecayParam = apvts.getRawParameterValue ("lpgDecay");
+    lpgResParam = apvts.getRawParameterValue ("lpgRes");
     mixParam = apvts.getRawParameterValue ("mix");
     outputParam = apvts.getRawParameterValue ("output");
 
@@ -96,6 +104,9 @@ RunawayAudioProcessor::RunawayAudioProcessor()
     apvts.addParameterListener ("mode", this);
     for (const auto* id : getPerModeParamIds())
         apvts.addParameterListener (id, this);
+
+    abSlotXml[0] = createStateXml();
+    abSlotXml[1] = createStateXml();
 }
 
 RunawayAudioProcessor::~RunawayAudioProcessor()
@@ -127,6 +138,23 @@ juce::StringArray RunawayAudioProcessor::getFactoryPresetNames()
     return names;
 }
 
+juce::File RunawayAudioProcessor::getUserPresetsDirectory()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+        .getChildFile ("Audio/Presets/RunawayAudio/Runaway");
+}
+
+juce::Array<juce::File> RunawayAudioProcessor::scanUserPresetFiles()
+{
+    const auto dir = getUserPresetsDirectory();
+    if (! dir.isDirectory())
+        return {};
+
+    auto files = dir.findChildFiles (juce::File::findFiles, false, "*.runaway");
+    files.sort();
+    return files;
+}
+
 void RunawayAudioProcessor::loadFactoryPreset (int presetIndex)
 {
     const size_t idx = static_cast<size_t> (juce::jlimit (0, numFactoryPresets - 1, presetIndex));
@@ -154,6 +182,47 @@ void RunawayAudioProcessor::loadFactoryPreset (int presetIndex)
     }
 
     isRecallingMode.store (false, std::memory_order_relaxed);
+}
+
+bool RunawayAudioProcessor::saveUserPresetToFile (const juce::File& file) const
+{
+    const auto parent = file.getParentDirectory();
+    if (! parent.isDirectory())
+        parent.createDirectory();
+
+    const auto xml = createStateXml();
+    if (xml == nullptr)
+        return false;
+
+    return xml->writeTo (file);
+}
+
+bool RunawayAudioProcessor::loadUserPresetFromFile (const juce::File& file)
+{
+    if (! file.existsAsFile())
+        return false;
+
+    std::unique_ptr<juce::XmlElement> xml (juce::XmlDocument::parse (file));
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return false;
+
+    applyStateXml (*xml);
+    return true;
+}
+
+void RunawayAudioProcessor::toggleABSlot()
+{
+    abSlotXml[static_cast<size_t> (activeABSlot)] = createStateXml();
+    activeABSlot = 1 - activeABSlot;
+
+    if (auto* targetXml = abSlotXml[static_cast<size_t> (activeABSlot)].get())
+        applyStateXml (*targetXml);
+}
+
+void RunawayAudioProcessor::copyActiveSlotToOther()
+{
+    const int other = 1 - activeABSlot;
+    abSlotXml[static_cast<size_t> (other)] = createStateXml();
 }
 
 void RunawayAudioProcessor::parameterChanged (const juce::String& parameterID, float newValue)
@@ -351,6 +420,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
         140.0f,
         juce::AudioParameterFloatAttributes().withLabel ("ms")));
 
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "lpgMode", 1 },
+        "LPG Mode",
+        juce::StringArray {
+            "OFF",
+            "BOTH (LPG)",
+            "VCA",
+            "FILTER"
+        },
+        0));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lpgDecay", 1 },
+        "LPG Decay",
+        juce::NormalisableRange<float> (40.0f, 1200.0f, 1.0f, 0.45f),
+        280.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("ms")));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lpgRes", 1 },
+        "LPG Ring / Q",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f, 1.0f),
+        35.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("%")));
+
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mix", 1 },
         "Mix",
@@ -396,12 +490,16 @@ void RunawayAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     }
     scopeWritePos.store (0, std::memory_order_relaxed);
     envMeterLevel.store (0.0f, std::memory_order_relaxed);
+    vactrolMeterLevel.store (0.0f, std::memory_order_relaxed);
+    liveInputPeak.store (0.0f, std::memory_order_relaxed);
 }
 
 void RunawayAudioProcessor::releaseResources()
 {
     waveshaperEngine.reset();
     envMeterLevel.store (0.0f, std::memory_order_relaxed);
+    vactrolMeterLevel.store (0.0f, std::memory_order_relaxed);
+    liveInputPeak.store (0.0f, std::memory_order_relaxed);
 }
 
 bool RunawayAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -438,6 +536,7 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                                                static_cast<float> (juce::MidiMessage::getMidiNoteInHertz (msg.getNoteNumber())));
             midiNoteFreqHz.store (noteHz, std::memory_order_relaxed);
             hasMidiNote.store (true, std::memory_order_relaxed);
+            midiStrikeCounter.fetch_add (1u, std::memory_order_relaxed);
         }
     }
 
@@ -460,6 +559,9 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const int envTargetIdx = static_cast<int> (std::lround (envTargetParam->load()));
     const float envAmountSigned = envAmountParam->load() * 0.01f;
     const float envReleaseMs = envReleaseParam->load();
+    const int lpgModeIdx = static_cast<int> (std::lround (lpgModeParam->load()));
+    const float lpgDecayMs = lpgDecayParam->load();
+    const float lpgResNorm = lpgResParam->load() * 0.01f;
     const float mixNorm = mixParam->load() * 0.01f;
     const float wetLevelDb = outputParam->load();
 
@@ -479,6 +581,10 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                                     envTargetIdx,
                                     envAmountSigned,
                                     envReleaseMs,
+                                    lpgModeIdx,
+                                    lpgDecayMs,
+                                    lpgResNorm,
+                                    midiStrikeCounter.load (std::memory_order_relaxed),
                                     mixNorm,
                                     wetLevelDb);
 
@@ -487,12 +593,19 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float* inL = buffer.getReadPointer (0);
     const float* inR = (totalNumInputChannels > 1) ? buffer.getReadPointer (1) : inL;
 
+    float blockPeak = 0.0f;
     for (int i = 0; i < captureSamples; ++i)
-        dryCapture[i] = 0.5f * (inL[i] + inR[i]);
+    {
+        const float mono = 0.5f * (inL[i] + inR[i]);
+        dryCapture[i] = mono;
+        blockPeak = std::max (blockPeak, std::abs (mono));
+    }
+    liveInputPeak.store (blockPeak, std::memory_order_relaxed);
 
     waveshaperEngine.process (buffer);
 
     envMeterLevel.store (waveshaperEngine.getLastEnvelopeLevel(), std::memory_order_relaxed);
+    vactrolMeterLevel.store (waveshaperEngine.getLastVactrolLevel(), std::memory_order_relaxed);
 
     const float* outL = buffer.getReadPointer (0);
     const float* outR = (totalNumOutputChannels > 1) ? buffer.getReadPointer (1) : outL;
@@ -529,7 +642,7 @@ juce::AudioProcessorEditor* RunawayAudioProcessor::createEditor()
     return new RunawayAudioProcessorEditor (*this);
 }
 
-void RunawayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+std::unique_ptr<juce::XmlElement> RunawayAudioProcessor::createStateXml() const
 {
     const auto state = apvts.copyState();
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
@@ -548,6 +661,65 @@ void RunawayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         }
     }
 
+    return xml;
+}
+
+void RunawayAudioProcessor::applyStateXml (const juce::XmlElement& sourceXml)
+{
+    std::unique_ptr<juce::XmlElement> xmlCopy (new juce::XmlElement (sourceXml));
+    if (! xmlCopy->hasTagName (apvts.state.getType()))
+        return;
+
+    initDefaultModePresets();
+    const auto& ids = getPerModeParamIds();
+
+    if (auto* banksXml = xmlCopy->getChildByName ("MODE_BANKS"))
+    {
+        for (auto* modeXml = banksXml->getFirstChildElement();
+             modeXml != nullptr;
+             modeXml = modeXml->getNextElement())
+        {
+            if (! modeXml->hasTagName ("MODE"))
+                continue;
+
+            const int m = modeXml->getIntAttribute ("index", -1);
+            if (m >= 0 && m < numModes)
+            {
+                for (size_t p = 0; p < ids.size(); ++p)
+                {
+                    if (modeXml->hasAttribute (ids[p]))
+                    {
+                        const float fallback = modePresets[static_cast<size_t> (m)][p].load (std::memory_order_relaxed);
+                        const float val = static_cast<float> (modeXml->getDoubleAttribute (ids[p],
+                                                                                          static_cast<double> (fallback)));
+                        modePresets[static_cast<size_t> (m)][p].store (val, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+
+        xmlCopy->removeChildElement (banksXml, true);
+    }
+
+    isRecallingMode.store (true, std::memory_order_relaxed);
+    apvts.replaceState (juce::ValueTree::fromXml (*xmlCopy));
+
+    const int loadedMode = juce::jlimit (0, numModes - 1, static_cast<int> (std::lround (modeParam->load())));
+    activeModeIndex.store (loadedMode, std::memory_order_relaxed);
+    pendingModeIndex.store (loadedMode, std::memory_order_relaxed);
+
+    for (size_t p = 0; p < ids.size(); ++p)
+    {
+        if (auto* raw = apvts.getRawParameterValue (ids[p]))
+            modePresets[static_cast<size_t> (loadedMode)][p].store (raw->load(), std::memory_order_relaxed);
+    }
+
+    isRecallingMode.store (false, std::memory_order_relaxed);
+}
+
+void RunawayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    const auto xml = createStateXml();
     copyXmlToBinary (*xml, destData);
 }
 
@@ -555,53 +727,7 @@ void RunawayAudioProcessor::setStateInformation (const void* data, int sizeInByt
 {
     std::unique_ptr<juce::XmlElement> xmlState (getXmlFromBinary (data, sizeInBytes));
     if (xmlState != nullptr && xmlState->hasTagName (apvts.state.getType()))
-    {
-        initDefaultModePresets();
-        const auto& ids = getPerModeParamIds();
-
-        if (auto* banksXml = xmlState->getChildByName ("MODE_BANKS"))
-        {
-            for (auto* modeXml = banksXml->getFirstChildElement();
-                 modeXml != nullptr;
-                 modeXml = modeXml->getNextElement())
-            {
-                if (! modeXml->hasTagName ("MODE"))
-                    continue;
-
-                const int m = modeXml->getIntAttribute ("index", -1);
-                if (m >= 0 && m < numModes)
-                {
-                    for (size_t p = 0; p < ids.size(); ++p)
-                    {
-                        if (modeXml->hasAttribute (ids[p]))
-                        {
-                            const float fallback = modePresets[static_cast<size_t> (m)][p].load (std::memory_order_relaxed);
-                            const float val = static_cast<float> (modeXml->getDoubleAttribute (ids[p],
-                                                                                              static_cast<double> (fallback)));
-                            modePresets[static_cast<size_t> (m)][p].store (val, std::memory_order_relaxed);
-                        }
-                    }
-                }
-            }
-
-            xmlState->removeChildElement (banksXml, true);
-        }
-
-        isRecallingMode.store (true, std::memory_order_relaxed);
-        apvts.replaceState (juce::ValueTree::fromXml (*xmlState));
-
-        const int loadedMode = juce::jlimit (0, numModes - 1, static_cast<int> (std::lround (modeParam->load())));
-        activeModeIndex.store (loadedMode, std::memory_order_relaxed);
-        pendingModeIndex.store (loadedMode, std::memory_order_relaxed);
-
-        for (size_t p = 0; p < ids.size(); ++p)
-        {
-            if (auto* raw = apvts.getRawParameterValue (ids[p]))
-                modePresets[static_cast<size_t> (loadedMode)][p].store (raw->load(), std::memory_order_relaxed);
-        }
-
-        isRecallingMode.store (false, std::memory_order_relaxed);
-    }
+        applyStateXml (*xmlState);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
