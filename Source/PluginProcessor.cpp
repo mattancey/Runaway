@@ -1,12 +1,66 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+namespace
+{
+struct FactoryPresetData
+{
+    const char* name;
+    int mode;
+    float mix;
+    std::array<float, RunawayAudioProcessor::numPerModeParams> perMode;
+};
+
+static constexpr std::array<FactoryPresetData, RunawayAudioProcessor::numFactoryPresets> factoryPresets {{
+    {
+        "01  INIT / CLEAN FOLD",
+        0, 100.0f,
+        { 14000.0f, 35.0f, 20.0f, 0.0f, 1.0f, 0.0f, 110.0f, 35.0f, 4500.0f, 25.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 140.0f }
+    },
+    {
+        "02  BUCHLA DRUM CRUSHER",
+        0, 82.0f,
+        { 12000.0f, 68.0f, 35.0f, 0.0f, 1.0f, -3.0f, 98.0f, 48.0f, 5200.0f, 30.0f, 0.0f, 0.0f, -1.5f, 1.0f, 55.0f, 95.0f }
+    },
+    {
+        "03  SOMA TOTAL CHAOS",
+        0, 90.0f,
+        { 9500.0f, 82.0f, 76.0f, 0.0f, 1.0f, -7.5f, 73.4f, 84.0f, 3100.0f, 45.0f, 1.0f, 1.0f, -2.0f, 2.0f, 65.0f, 180.0f }
+    },
+    {
+        "04  BIFOLD HARMONIC MORPH",
+        1, 88.0f,
+        { 16000.0f, 58.0f, 58.0f, 1.0f, 1.0f, -2.0f, 110.0f, 68.0f, 6200.0f, 82.0f, 0.0f, 0.0f, -1.0f, 3.0f, 45.0f, 160.0f }
+    },
+    {
+        "05  ERICA XENO BASS",
+        2, 92.0f,
+        { 11000.0f, 64.0f, 54.0f, 0.0f, 1.0f, -4.0f, 55.0f, 44.0f, 2400.0f, 18.0f, 0.0f, 0.0f, -3.5f, 1.0f, 40.0f, 110.0f }
+    },
+    {
+        "06  ECHON 6 HOLLOW PIPE",
+        3, 85.0f,
+        { 13000.0f, 46.0f, 62.0f, 0.0f, 1.0f, -3.0f, 146.8f, 82.0f, 3200.0f, 32.0f, 1.0f, 0.0f, -1.0f, 4.0f, 22.0f, 130.0f }
+    },
+    {
+        "07  NIGHTSKY SHIMMER CLOUD",
+        1, 68.0f,
+        { 15000.0f, 42.0f, 32.0f, 2.0f, 1.0f, -4.5f, 130.8f, 88.0f, 6500.0f, 76.0f, 0.0f, 0.0f, 0.0f, 3.0f, 35.0f, 320.0f }
+    },
+    {
+        "08  STUTTER DUCKING RESO",
+        2, 95.0f,
+        { 14000.0f, 56.0f, 32.0f, 1.0f, 1.0f, -5.0f, 73.4f, 78.0f, 7500.0f, 70.0f, 1.0f, 1.0f, -2.0f, 3.0f, -75.0f, 150.0f }
+    }
+}};
+} // namespace
+
 const std::array<const char*, RunawayAudioProcessor::numPerModeParams>& RunawayAudioProcessor::getPerModeParamIds() noexcept
 {
     static constexpr std::array<const char*, numPerModeParams> ids {
         "preCutoff", "drive", "character", "loopEngine", "loopActive",
         "loopLevel", "pitch", "feedback", "loopCutoff", "spread",
-        "polarity", "inLoop", "output"
+        "polarity", "inLoop", "output", "envTarget", "envAmount", "envRelease"
     };
     return ids;
 }
@@ -31,6 +85,9 @@ RunawayAudioProcessor::RunawayAudioProcessor()
     polarityParam = apvts.getRawParameterValue ("polarity");
     inLoopParam = apvts.getRawParameterValue ("inLoop");
     midiTrackParam = apvts.getRawParameterValue ("midiTrack");
+    envTargetParam = apvts.getRawParameterValue ("envTarget");
+    envAmountParam = apvts.getRawParameterValue ("envAmount");
+    envReleaseParam = apvts.getRawParameterValue ("envRelease");
     mixParam = apvts.getRawParameterValue ("mix");
     outputParam = apvts.getRawParameterValue ("output");
 
@@ -52,21 +109,7 @@ RunawayAudioProcessor::~RunawayAudioProcessor()
 
 void RunawayAudioProcessor::initDefaultModePresets()
 {
-    static constexpr std::array<float, numPerModeParams> defaults {
-        14000.0f, // preCutoff
-        35.0f,    // drive
-        25.0f,    // character
-        0.0f,     // loopEngine (0 = STRING)
-        1.0f,     // loopActive (1 = ON)
-        0.0f,     // loopLevel (0 dB)
-        110.0f,   // pitch
-        35.0f,    // feedback
-        4500.0f,  // loopCutoff
-        25.0f,    // spread
-        0.0f,     // polarity
-        0.0f,     // inLoop
-        0.0f      // output (wet level dB)
-    };
+    const auto& defaults = factoryPresets[0].perMode;
 
     for (size_t m = 0; m < numModes; ++m)
         for (size_t p = 0; p < numPerModeParams; ++p)
@@ -74,6 +117,43 @@ void RunawayAudioProcessor::initDefaultModePresets()
 
     activeModeIndex.store (0, std::memory_order_relaxed);
     pendingModeIndex.store (0, std::memory_order_relaxed);
+}
+
+juce::StringArray RunawayAudioProcessor::getFactoryPresetNames()
+{
+    juce::StringArray names;
+    for (const auto& fp : factoryPresets)
+        names.add (fp.name);
+    return names;
+}
+
+void RunawayAudioProcessor::loadFactoryPreset (int presetIndex)
+{
+    const size_t idx = static_cast<size_t> (juce::jlimit (0, numFactoryPresets - 1, presetIndex));
+    const auto& fp = factoryPresets[idx];
+    const int targetMode = juce::jlimit (0, numModes - 1, fp.mode);
+
+    isRecallingMode.store (true, std::memory_order_relaxed);
+    activeModeIndex.store (targetMode, std::memory_order_relaxed);
+    pendingModeIndex.store (targetMode, std::memory_order_relaxed);
+
+    for (size_t p = 0; p < numPerModeParams; ++p)
+        modePresets[static_cast<size_t> (targetMode)][p].store (fp.perMode[p], std::memory_order_relaxed);
+
+    if (auto* mParam = apvts.getParameter ("mode"))
+        mParam->setValueNotifyingHost (mParam->convertTo0to1 (static_cast<float> (targetMode)));
+
+    if (auto* mxParam = apvts.getParameter ("mix"))
+        mxParam->setValueNotifyingHost (mxParam->convertTo0to1 (fp.mix));
+
+    const auto& ids = getPerModeParamIds();
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (auto* param = apvts.getParameter (ids[i]))
+            param->setValueNotifyingHost (param->convertTo0to1 (fp.perMode[i]));
+    }
+
+    isRecallingMode.store (false, std::memory_order_relaxed);
 }
 
 void RunawayAudioProcessor::parameterChanged (const juce::String& parameterID, float newValue)
@@ -197,7 +277,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
 
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "loopLevel", 1 },
-        "Loop Level",
+        "In-Loop Level",
         juce::NormalisableRange<float> (-24.0f, 12.0f, 0.1f, 1.0f),
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
@@ -245,6 +325,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
         "MIDI Pitch Track",
         false));
 
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "envTarget", 1 },
+        "Env Target",
+        juce::StringArray {
+            "OFF",
+            "DRIVE",
+            "CHARACTER",
+            "LOOP LPF",
+            "RESO PITCH"
+        },
+        0));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "envAmount", 1 },
+        "Env Amount",
+        juce::NormalisableRange<float> (-100.0f, 100.0f, 0.5f, 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("%")));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "envRelease", 1 },
+        "Env Release",
+        juce::NormalisableRange<float> (20.0f, 600.0f, 1.0f, 0.5f),
+        140.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("ms")));
+
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mix", 1 },
         "Mix",
@@ -289,11 +395,13 @@ void RunawayAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
         scopeWetRing[static_cast<size_t> (i)].store (0.0f, std::memory_order_relaxed);
     }
     scopeWritePos.store (0, std::memory_order_relaxed);
+    envMeterLevel.store (0.0f, std::memory_order_relaxed);
 }
 
 void RunawayAudioProcessor::releaseResources()
 {
     waveshaperEngine.reset();
+    envMeterLevel.store (0.0f, std::memory_order_relaxed);
 }
 
 bool RunawayAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -321,7 +429,6 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     if (numSamples <= 0 || totalNumInputChannels <= 0)
         return;
 
-    // Wait-free MIDI note capture for resonator pitch tracking
     for (const auto metadata : midiMessages)
     {
         const auto msg = metadata.getMessage();
@@ -337,7 +444,7 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const int modeIdx = static_cast<int> (std::lround (modeParam->load()));
     const int loopEngIdx = static_cast<int> (std::lround (loopEngineParam->load()));
     const bool loopEnabled = (loopActiveParam->load() >= 0.5f);
-    const float loopLevelDb = loopLevelParam->load();
+    const float inLoopLevelDb = loopLevelParam->load();
     const float preCutoffHz = preCutoffParam->load();
     const float driveNorm = driveParam->load() * 0.01f;
     const float charNorm = characterParam->load() * 0.01f;
@@ -350,13 +457,16 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float spreadNorm = spreadParam->load() * 0.01f;
     const bool invertPolarity = (polarityParam->load() >= 0.5f);
     const bool shaperInLoop = (inLoopParam->load() >= 0.5f);
+    const int envTargetIdx = static_cast<int> (std::lround (envTargetParam->load()));
+    const float envAmountSigned = envAmountParam->load() * 0.01f;
+    const float envReleaseMs = envReleaseParam->load();
     const float mixNorm = mixParam->load() * 0.01f;
     const float wetLevelDb = outputParam->load();
 
     waveshaperEngine.setParameters (modeIdx,
                                     loopEngIdx,
                                     loopEnabled,
-                                    loopLevelDb,
+                                    inLoopLevelDb,
                                     preCutoffHz,
                                     driveNorm,
                                     charNorm,
@@ -366,6 +476,9 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                                     spreadNorm,
                                     invertPolarity,
                                     shaperInLoop,
+                                    envTargetIdx,
+                                    envAmountSigned,
+                                    envReleaseMs,
                                     mixNorm,
                                     wetLevelDb);
 
@@ -378,6 +491,8 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         dryCapture[i] = 0.5f * (inL[i] + inR[i]);
 
     waveshaperEngine.process (buffer);
+
+    envMeterLevel.store (waveshaperEngine.getLastEnvelopeLevel(), std::memory_order_relaxed);
 
     const float* outL = buffer.getReadPointer (0);
     const float* outR = (totalNumOutputChannels > 1) ? buffer.getReadPointer (1) : outL;
