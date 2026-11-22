@@ -623,7 +623,6 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
     g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
     g.drawText ("v0.5  •  BUCHLA LPG / ECHON 6 / NIGHTSKY", 18, 34, 260, 14, juce::Justification::centredLeft);
 
-    // Visualiser panel (Scope or Transfer Curve X/Y)
     const auto sf = scopeBounds.toFloat();
     g.setColour (juce::Colour (0xff090b0f));
     g.fillRoundedRectangle (sf, 8.0f);
@@ -638,7 +637,6 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
     {
         if (showTransferCurve)
         {
-            // Subtle y = x reference line
             g.setColour (juce::Colour (0xff2f3644));
             g.drawLine (sf.getX() + 12.0f, sf.getBottom() - 8.0f,
                         sf.getRight() - 12.0f, sf.getY() + 8.0f, 1.0f);
@@ -670,7 +668,6 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
             g.strokePath (curvePath, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
 
-            // Live input excursion tracer along curve
             const float livePeak = juce::jlimit (0.0f, 1.0f, audioProcessor.getLiveInputPeak());
             if (livePeak > 0.01f)
             {
@@ -679,3 +676,246 @@ void RunawayAudioProcessorEditor::paint (juce::Graphics& g)
                     const float xPt = sign * livePeak;
                     const float yPt = runaway::dsp::WaveshaperEngine::evalTransferPreview (modeIdx, xPt, drvNorm, chrNorm);
                     const float px = sf.getX() + 12.0f
+                                     + (sf.getWidth() - 24.0f) * (0.5f + 0.5f * xPt);
+                    const float py = midY - juce::jlimit (-1.1f, 1.1f, yPt) * ampScale;
+                    g.setColour (juce::Colours::white.withAlpha (0.9f));
+                    g.fillEllipse (px - 3.5f, py - 3.5f, 7.0f, 7.0f);
+                }
+            }
+        }
+        else
+        {
+            for (int i = 1; i < 4; ++i)
+            {
+                if (i == 2) continue;
+                const float gx = sf.getX() + sf.getWidth() * (static_cast<float> (i) / 4.0f);
+                g.setColour (juce::Colour (0xff181c24));
+                g.drawVerticalLine (static_cast<int> (gx), sf.getY() + 6.0f, sf.getBottom() - 6.0f);
+            }
+
+            juce::Path dryPath;
+            juce::Path wetPath;
+
+            const float midY = sf.getCentreY();
+            const float ampScale = sf.getHeight() * 0.42f;
+            const int n = RunawayAudioProcessor::scopeBufferSize;
+
+            for (int i = 0; i < n; ++i)
+            {
+                const float px = sf.getX() + 6.0f
+                                 + (sf.getWidth() - 12.0f) * (static_cast<float> (i) / static_cast<float> (n - 1));
+                const float dY = midY - juce::jlimit (-1.1f, 1.1f, dryScope[static_cast<size_t> (i)]) * ampScale;
+                const float wY = midY - juce::jlimit (-1.1f, 1.1f, wetScope[static_cast<size_t> (i)]) * ampScale;
+
+                if (i == 0)
+                {
+                    dryPath.startNewSubPath (px, dY);
+                    wetPath.startNewSubPath (px, wY);
+                }
+                else
+                {
+                    dryPath.lineTo (px, dY);
+                    wetPath.lineTo (px, wY);
+                }
+            }
+
+            g.setColour (juce::Colour (0xff495163).withAlpha (0.55f));
+            g.strokePath (dryPath, juce::PathStrokeType (1.2f));
+
+            g.setColour (lookAndFeel.getAccentColour());
+            g.strokePath (wetPath, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+        }
+    }
+
+    g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    if (showTransferCurve)
+    {
+        g.setColour (lookAndFeel.getAccentColour());
+        g.drawText ("TRANSFER CURVE  y = f(x)", scopeBounds.getX() + 12, scopeBounds.getY() + 8, 170, 14, juce::Justification::left);
+    }
+    else
+    {
+        g.setColour (juce::Colour (0xff677085));
+        g.drawText ("DRY IN", scopeBounds.getX() + 12, scopeBounds.getY() + 8, 60, 14, juce::Justification::left);
+        g.setColour (lookAndFeel.getAccentColour());
+        g.drawText ("RUNAWAY OUT", scopeBounds.getX() + 68, scopeBounds.getY() + 8, 100, 14, juce::Justification::left);
+    }
+
+    auto viewPill = juce::Rectangle<int> (scopeBounds.getRight() - 150, scopeBounds.getY() + 6, 140, 18);
+    g.setColour (juce::Colour (0xff181c24));
+    g.fillRoundedRectangle (viewPill.toFloat(), 4.0f);
+    g.setColour (juce::Colour (0xff8a93a6));
+    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    g.drawText (showTransferCurve ? "VIEW: CURVE  (CLICK)" : "VIEW: SCOPE  (CLICK)",
+                viewPill, juce::Justification::centred);
+
+    const auto rf = row2Bounds.toFloat();
+    g.setColour (juce::Colour (0xff13161d));
+    g.fillRoundedRectangle (rf, 8.0f);
+    g.setColour (juce::Colour (0xff232833));
+    g.drawRoundedRectangle (rf, 8.0f, 1.0f);
+
+    g.setColour (juce::Colour (0xff6b7488));
+    g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    g.drawText ("LOOP ENGINE",
+                row2Bounds.getX() + 14, row2Bounds.getY() + 14, 90, 18,
+                juce::Justification::centredLeft);
+
+    g.setColour (juce::Colour (0xff13161d));
+    g.fillRoundedRectangle (row3LeftBounds.toFloat(), 8.0f);
+    g.setColour (juce::Colour (0xff232833));
+    g.drawRoundedRectangle (row3LeftBounds.toFloat(), 8.0f, 1.0f);
+
+    g.setColour (juce::Colour (0xff6b7488));
+    g.drawText ("ENV FOLLOWER  (ANALOG HEAT)",
+                row3LeftBounds.getX() + 12, row3LeftBounds.getY() + 8, 220, 16,
+                juce::Justification::centredLeft);
+
+    g.setColour (juce::Colour (0xff13161d));
+    g.fillRoundedRectangle (row3RightBounds.toFloat(), 8.0f);
+    g.setColour (juce::Colour (0xff232833));
+    g.drawRoundedRectangle (row3RightBounds.toFloat(), 8.0f, 1.0f);
+
+    g.setColour (juce::Colour (0xff6b7488));
+    g.drawText ("VACTROL LPG  (BUCHLA 292 / OPTOMIX)",
+                row3RightBounds.getX() + 12, row3RightBounds.getY() + 8, 260, 16,
+                juce::Justification::centredLeft);
+
+    auto drawMeter = [&] (const juce::Rectangle<int>& box, float val, const juce::String& labelText)
+    {
+        const auto mf = box.toFloat();
+        g.setColour (juce::Colour (0xff090b0f));
+        g.fillRoundedRectangle (mf, 4.0f);
+        g.setColour (juce::Colour (0xff252a36));
+        g.drawRoundedRectangle (mf, 4.0f, 1.0f);
+
+        const float fillW = std::max (0.0f, (mf.getWidth() - 4.0f) * juce::jlimit (0.0f, 1.0f, val));
+        if (fillW > 1.0f)
+        {
+            g.setColour (lookAndFeel.getAccentColour().withAlpha (0.85f));
+            g.fillRoundedRectangle (mf.getX() + 2.0f, mf.getY() + 2.0f, fillW, mf.getHeight() - 4.0f, 3.0f);
+        }
+
+        g.setColour (juce::Colour (0xff677085));
+        g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+        g.drawText (labelText, box.getX(), box.getY() - 16, box.getWidth(), 14, juce::Justification::centredLeft);
+    };
+
+    drawMeter (envMeterBounds, envMeterSmooth, "ENV ACTIVITY");
+    drawMeter (lpgMeterBounds, lpgMeterSmooth, "VACTROL LED");
+}
+
+void RunawayAudioProcessorEditor::resized()
+{
+    auto area = getLocalBounds();
+
+    auto header = area.removeFromTop (56);
+    auto headerRight = header.removeFromRight (605).reduced (12, 12);
+
+    abSlotButton.setBounds (headerRight.removeFromLeft (64));
+    headerRight.removeFromLeft (4);
+    abCopyButton.setBounds (headerRight.removeFromLeft (46));
+    headerRight.removeFromLeft (8);
+    presetSelector.setBounds (headerRight.removeFromLeft (162));
+    headerRight.removeFromLeft (4);
+    savePresetButton.setBounds (headerRight.removeFromLeft (48));
+    headerRight.removeFromLeft (8);
+    modeSelector.setBounds (headerRight);
+
+    area.reduce (20, 10);
+
+    scopeBounds = area.removeFromTop (108);
+    area.removeFromTop (10);
+
+    auto row1 = area.removeFromTop (124);
+    const int col1W = area.getWidth() / 5;
+
+    auto placeKnob1 = [&] (int index, juce::Slider& s, juce::Label& l)
+    {
+        auto slot = row1.withX (row1.getX() + index * col1W).withWidth (col1W);
+        l.setBounds (slot.removeFromTop (18));
+        s.setBounds (slot.reduced (4, 0));
+    };
+
+    placeKnob1 (0, preCutoffSlider, preCutoffLabel);
+    placeKnob1 (1, driveSlider, driveLabel);
+    placeKnob1 (2, characterSlider, characterLabel);
+    placeKnob1 (3, mixSlider, mixLabel);
+    placeKnob1 (4, outputSlider, outputLabel);
+
+    area.removeFromTop (10);
+
+    row2Bounds = area.removeFromTop (180);
+    auto innerRow2 = row2Bounds.reduced (10, 8);
+
+    auto loopTopBar = innerRow2.removeFromTop (30);
+    loopTopBar.removeFromLeft (94);
+    loopEngineSelector.setBounds (loopTopBar.removeFromLeft (270).reduced (0, 2));
+    loopActiveButton.setBounds (loopTopBar.removeFromRight (120).reduced (2, 1));
+    loopTopBar.removeFromRight (8);
+    midiTrackButton.setBounds (loopTopBar.removeFromRight (120).reduced (2, 1));
+
+    innerRow2.removeFromTop (8);
+
+    const int col2W = innerRow2.getWidth() / 6;
+    auto placeKnob2 = [&] (int index, juce::Slider& s, juce::Label& l)
+    {
+        auto slot = innerRow2.withX (innerRow2.getX() + index * col2W).withWidth (col2W);
+        l.setBounds (slot.removeFromTop (18));
+        s.setBounds (slot.reduced (2, 0));
+    };
+
+    placeKnob2 (0, pitchSlider, pitchLabel);
+    placeKnob2 (1, feedbackSlider, feedbackLabel);
+    placeKnob2 (2, loopCutoffSlider, loopCutoffLabel);
+    placeKnob2 (3, spreadSlider, spreadLabel);
+    placeKnob2 (4, loopLevelSlider, loopLevelLabel);
+
+    auto toggleCol = innerRow2.withX (innerRow2.getX() + 5 * col2W).withWidth (col2W).reduced (4, 12);
+    polarityButton.setBounds (toggleCol.removeFromTop (36));
+    toggleCol.removeFromTop (10);
+    loopModeButton.setBounds (toggleCol.removeFromTop (36));
+
+    area.removeFromTop (10);
+
+    const int halfW = (area.getWidth() - 12) / 2;
+    row3LeftBounds = area.removeFromLeft (halfW);
+    area.removeFromLeft (12);
+    row3RightBounds = area;
+
+    auto innerLeft = row3LeftBounds.reduced (12, 10);
+    innerLeft.removeFromTop (22);
+    auto envCtrlCol = innerLeft.removeFromLeft (158);
+    envTargetSelector.setBounds (envCtrlCol.removeFromTop (30));
+    envCtrlCol.removeFromTop (28);
+    envMeterBounds = envCtrlCol.removeFromTop (16);
+
+    innerLeft.removeFromLeft (10);
+    const int envKnobW = innerLeft.getWidth() / 2;
+    auto envSlot1 = innerLeft.removeFromLeft (envKnobW);
+    envAmountLabel.setBounds (envSlot1.removeFromTop (16));
+    envAmountSlider.setBounds (envSlot1.reduced (2, 0));
+
+    envReleaseLabel.setBounds (innerLeft.removeFromTop (16));
+    envReleaseSlider.setBounds (innerLeft.reduced (2, 0));
+
+    auto innerRight = row3RightBounds.reduced (12, 10);
+    innerRight.removeFromTop (22);
+    auto lpgCtrlCol = innerRight.removeFromLeft (158);
+    lpgModeSelector.setBounds (lpgCtrlCol.removeFromTop (30));
+    lpgCtrlCol.removeFromTop (28);
+    lpgMeterBounds = lpgCtrlCol.removeFromTop (16);
+
+    innerRight.removeFromLeft (10);
+    const int lpgKnobW = innerRight.getWidth() / 2;
+    auto lpgSlot1 = innerRight.removeFromLeft (lpgKnobW);
+    lpgDecayLabel.setBounds (lpgSlot1.removeFromTop (16));
+    lpgDecaySlider.setBounds (lpgSlot1.reduced (2, 0));
+
+    lpgResLabel.setBounds (innerRight.removeFromTop (16));
+    lpgResSlider.setBounds (innerRight.reduced (2, 0));
+
+    saveOverlay.setBounds (getLocalBounds());
+    saveOverlay.toFront (false);
+}
