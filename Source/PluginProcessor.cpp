@@ -1,5 +1,3 @@
-// Fichier: Source/PluginProcessor.cpp
-
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -17,42 +15,42 @@ static constexpr std::array<FactoryPresetData, RunawayAudioProcessor::numFactory
     {
         "01  INIT / CLEAN FOLD",
         0, 100.0f,
-        { 14000.0f, 35.0f, 20.0f, 0.0f, 1.0f, 0.0f, 110.0f, 35.0f, 4500.0f, 25.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 140.0f, 0.0f, 280.0f, 35.0f }
+        { 14000.0f, 35.0f, 20.0f, 0.0f, 1.0f, 0.0f, 110.0f, 35.0f, 4500.0f, 25.0f, 10.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 140.0f, 0.0f, 280.0f, 35.0f }
     },
     {
         "02  BUCHLA 292 BONGOS",
         0, 88.0f,
-        { 13000.0f, 70.0f, 32.0f, 0.0f, 1.0f, -3.0f, 130.8f, 62.0f, 5800.0f, 30.0f, 0.0f, 0.0f, 1.5f, 1.0f, 45.0f, 95.0f, 1.0f, 210.0f, 68.0f }
+        { 13000.0f, 70.0f, 32.0f, 0.0f, 1.0f, -3.0f, 130.8f, 62.0f, 5800.0f, 30.0f, 18.0f, 0.0f, 0.0f, 1.5f, 1.0f, 45.0f, 95.0f, 1.0f, 210.0f, 68.0f }
     },
     {
         "03  SOMA TOTAL CHAOS",
         0, 90.0f,
-        { 9500.0f, 82.0f, 76.0f, 0.0f, 1.0f, -7.5f, 73.4f, 84.0f, 3100.0f, 45.0f, 1.0f, 1.0f, -2.0f, 2.0f, 65.0f, 180.0f, 0.0f, 280.0f, 35.0f }
+        { 9500.0f, 82.0f, 76.0f, 0.0f, 1.0f, -7.5f, 73.4f, 84.0f, 3100.0f, 45.0f, 55.0f, 1.0f, 1.0f, -2.0f, 2.0f, 65.0f, 180.0f, 0.0f, 280.0f, 35.0f }
     },
     {
         "04  BIFOLD HARMONIC MORPH",
         1, 88.0f,
-        { 16000.0f, 58.0f, 58.0f, 1.0f, 1.0f, -2.0f, 110.0f, 68.0f, 6200.0f, 82.0f, 0.0f, 0.0f, -1.0f, 3.0f, 45.0f, 160.0f, 0.0f, 320.0f, 40.0f }
+        { 16000.0f, 58.0f, 58.0f, 1.0f, 1.0f, -2.0f, 110.0f, 68.0f, 6200.0f, 82.0f, 35.0f, 0.0f, 0.0f, -1.0f, 3.0f, 45.0f, 160.0f, 0.0f, 320.0f, 40.0f }
     },
     {
         "05  ERICA XENO BASS",
         2, 92.0f,
-        { 11000.0f, 64.0f, 54.0f, 0.0f, 1.0f, -4.0f, 55.0f, 44.0f, 2400.0f, 18.0f, 0.0f, 0.0f, -3.5f, 1.0f, 40.0f, 110.0f, 0.0f, 260.0f, 30.0f }
+        { 11000.0f, 64.0f, 54.0f, 0.0f, 1.0f, -4.0f, 55.0f, 44.0f, 2400.0f, 18.0f, 8.0f, 0.0f, 0.0f, -3.5f, 1.0f, 40.0f, 110.0f, 0.0f, 260.0f, 30.0f }
     },
     {
         "06  ECHON 6 HOLLOW PIPE",
         3, 85.0f,
-        { 13000.0f, 46.0f, 62.0f, 0.0f, 1.0f, -3.0f, 146.8f, 82.0f, 3200.0f, 32.0f, 1.0f, 0.0f, -1.0f, 4.0f, 22.0f, 130.0f, 1.0f, 340.0f, 55.0f }
+        { 13000.0f, 46.0f, 62.0f, 0.0f, 1.0f, -3.0f, 146.8f, 82.0f, 3200.0f, 32.0f, 28.0f, 1.0f, 0.0f, -1.0f, 4.0f, 22.0f, 130.0f, 1.0f, 340.0f, 55.0f }
     },
     {
         "07  NIGHTSKY SHIMMER CLOUD",
         1, 68.0f,
-        { 15000.0f, 42.0f, 32.0f, 2.0f, 1.0f, -4.5f, 130.8f, 88.0f, 6500.0f, 76.0f, 0.0f, 0.0f, 0.0f, 3.0f, 35.0f, 320.0f, 0.0f, 450.0f, 25.0f }
+        { 15000.0f, 42.0f, 32.0f, 2.0f, 1.0f, -4.5f, 130.8f, 88.0f, 6500.0f, 76.0f, 62.0f, 0.0f, 0.0f, 0.0f, 3.0f, 35.0f, 320.0f, 0.0f, 450.0f, 25.0f }
     },
     {
         "08  OPTOMIX CHOKED PLUCK",
         2, 94.0f,
-        { 14000.0f, 60.0f, 42.0f, 1.0f, 1.0f, -5.0f, 82.4f, 76.0f, 7200.0f, 65.0f, 1.0f, 1.0f, 1.0f, 3.0f, -65.0f, 130.0f, 1.0f, 145.0f, 78.0f }
+        { 14000.0f, 60.0f, 42.0f, 1.0f, 1.0f, -5.0f, 82.4f, 76.0f, 7200.0f, 65.0f, 20.0f, 1.0f, 1.0f, 1.0f, 3.0f, -65.0f, 130.0f, 1.0f, 145.0f, 78.0f }
     }
 }};
 } // namespace
@@ -61,7 +59,7 @@ const std::array<const char*, RunawayAudioProcessor::numPerModeParams>& RunawayA
 {
     static constexpr std::array<const char*, numPerModeParams> ids {
         "preCutoff", "drive", "character", "loopEngine", "loopActive",
-        "loopLevel", "pitch", "feedback", "loopCutoff", "spread",
+        "loopLevel", "pitch", "feedback", "loopCutoff", "spread", "cosmos",
         "polarity", "inLoop", "output", "envTarget", "envAmount", "envRelease",
         "lpgMode", "lpgDecay", "lpgRes"
     };
@@ -85,6 +83,7 @@ RunawayAudioProcessor::RunawayAudioProcessor()
     feedbackParam = apvts.getRawParameterValue ("feedback");
     loopCutoffParam = apvts.getRawParameterValue ("loopCutoff");
     spreadParam = apvts.getRawParameterValue ("spread");
+    cosmosParam = apvts.getRawParameterValue ("cosmos");
     polarityParam = apvts.getRawParameterValue ("polarity");
     inLoopParam = apvts.getRawParameterValue ("inLoop");
     midiTrackParam = apvts.getRawParameterValue ("midiTrack");
@@ -377,6 +376,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout RunawayAudioProcessor::creat
         25.0f,
         juce::AudioParameterFloatAttributes().withLabel ("%")));
 
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "cosmos", 1 },
+        "cosmos",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f, 1.0f),
+        10.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("%")));
+
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "polarity", 1 },
         "Feedback Polarity",
@@ -552,6 +558,7 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float feedbackNorm = feedbackParam->load() * 0.01f;
     const float loopCutoffHz = loopCutoffParam->load();
     const float spreadNorm = spreadParam->load() * 0.01f;
+    const float cosmosNorm = cosmosParam->load() * 0.01f;
     const bool invertPolarity = (polarityParam->load() >= 0.5f);
     const bool shaperInLoop = (inLoopParam->load() >= 0.5f);
     const int envTargetIdx = static_cast<int> (std::lround (envTargetParam->load()));
@@ -574,6 +581,7 @@ void RunawayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                                     feedbackNorm,
                                     loopCutoffHz,
                                     spreadNorm,
+                                    cosmosNorm,
                                     invertPolarity,
                                     shaperInLoop,
                                     envTargetIdx,
