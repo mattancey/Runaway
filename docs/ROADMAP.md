@@ -1,28 +1,68 @@
-# Runaway — Feuille de Route & Laboratoire Sonore (VST3 / AU)
+docs/ROADMAP.md
 
-**Runaway** est un processeur hybride **Distortion West-Coast + Résonateur BBD + Synthèse Réverbérante**, conçu étape par étape pour macOS 12+ (Universal Binary `arm64 + x86_64`, VST3 & AU dans Ableton Live).
+# Runaway — Feuille de Route & Point de Reprise
+
+> **Comment reprendre la prochaine fois :**
+> 1. Remplace ton fichier `docs/ROADMAP.md` sur GitHub par celui-ci.
+> 2. À ta prochaine connexion dans un nouveau chat, copie-colle ce fichier (puis envoie les fichiers `Source/` de ton GitHub si le chat te les demande).
+> 3. **Rappel pour l'assistant :** L'utilisateur est musicien (non-codeur). Ne donner **que des fichiers complets par bloc avec leur adresse précise juste avant** (un fichier à la fois si plusieurs fichiers changent).
 
 ---
 
-## État Actuel : ÉTAPE 3 — L'Espace Diffus, Accords & Contrôle Musical *(Implémentée)*
+## 1. Fiche Technique du Projet
+- **Nom** : **Runaway** (v0.5.0+ — `RunawayAudio`)
+- **Stack** : C++17, JUCE `8.0.14` (FetchContent), CMake
+- **Cible** : macOS 12+ Universal Binary (`arm64;x86_64`), formats **AU**, **VST3**, **Standalone** (`kAudioUnitType_MusicEffect`, entrée MIDI activée)
+- **Structure actuelle du dépôt** :
+  - `CMakeLists.txt` *(inchangé)*
+  - `.github/workflows/build.yml`
+  - `docs/ROADMAP.md` *(ce fichier)*
+  - `README.md`
+  - `Source/DSP/WaveshaperEngine.h`
+  - `Source/PluginProcessor.h`
+  - `Source/PluginProcessor.cpp`
+  - `Source/PluginEditor.h`
+  - `Source/PluginEditor.cpp`
 
-### Nouveautés de l'Étape 3 (v0.3.0) :
-1. **Contrôle dédié de la boucle (`LOOP: ON/OFF` + `LOOP LEVEL`)** :
-   - Bypass fluide (crossfade 25 ms sans clic) de la boucle de résonance.
-   - **`LOOP LEVEL` (`-24 dB` à `+12 dB`)** actif uniquement lorsque la boucle est enclenchée, pour égaliser exactement le volume entre `LOOP OFF`, `PRE-SHAPER` et `IN-SHAPER`.
+---
+
+## 2. Tout ce qui est déjà implémenté aujourd'hui
+1. **4 Topologies de distorsion (oversampling 4× + ADAA)** :
+   - `BUCHLA / SOMA` (259 parallel folder + Harvezi Spoil)
+   - `BIFOLD MORPH` (Buchla parallel ↔ Serge serial)
+   - `ERICA / XENO` (ADAA tanh + biais Germanium + Scream EQ)
+   - `112dB / CAT` (Werner nonlinear TPT SVF)
 2. **3 Moteurs de Boucle (`LOOP ENGINE`)** :
-   - **`STRING` (*Morphor Echon 6*)** : résonateur BBD pur à 1 ligne accordée + dérive stéréo (*Intellijel Sealegs*).
-   - **`CHORD` (*Erica Synths × 112dB Razornator*)** : 4 lignes parallèles accordées (Fondamentale, Quinte, Tierce mineure, Octave) contrôlées par `CHORD BLOOM`.
-   - **`DIFFUSE` (*Strymon NightSky*)** : matrice **FDN Hadamard 4×4** à préservation d'énergie, amortissement 12 dB/oct par branche et **Glimmer / Shimmer octave supérieure (`+12`)** dosé par `FDN GLIMMER`.
-3. **MIDI Pitch Tracking (`MIDI TRACK`)** :
-   - Joue les notes sur une piste MIDI routée vers **Runaway** dans Ableton Live pour accorder en direct le résonateur, l'accord ou le cœur diffus du FDN.
-4. **Mémoire indépendante par mode de distorsion** :
-   - Chacune des 4 distorsions (`BUCHLA/SOMA`, `BIFOLD`, `ERICA/XENO`, `112dB/CAT`) mémorise ses 13 paramètres (dont `LOOP ENGINE`, `LOOP ON/OFF` et `LOOP LEVEL`).
+   - `STRING` (*Morphor Echon 6* BBD + dérive stéréo)
+   - `CHORD` (*112dB Razornator* 4 voix accordées)
+   - `DIFFUSE` (*Strymon NightSky* matrice FDN Hadamard 4×4 + shimmer octave)
+   - Contrôles associés : `LOOP: ON/BYPASS`, `IN-LOOP LVL`, `RESO PITCH` (+ `MIDI TRACK`), `FEEDBACK`, `LOOP LPF`, `SPREAD`, `cosmos`, `POLARITY`, `ROUTING: PRE / IN-LOOP`.
+3. **Envelope Follower (*Elektron Analog Heat*)** :
+   - Assignable à `OFF`, `DRIVE`, `CHARACTER`, `LOOP LPF`, `RESO PITCH` + `ENV AMOUNT`, `ENV RELEASE`, vumètre `ENV ACTIVITY`.
+4. **Vactrol LPG (*Buchla 292 / Optomix*)** :
+   - Modes `OFF`, `BOTH (292)`, `VCA ONLY`, `FILTER ONLY` + `LPG DECAY`, `LPG RING / Q`, déclenchement audio & notes MIDI, vumètre `VACTROL LED`.
+5. **Gestionnaire de Presets & Visuels** :
+   - Comparateur **A/B** (`SLOT: A/B`, `COPY`).
+   - Oscilloscope `DRY IN / RUNAWAY OUT` + vue `TRANSFER CURVE y = f(x)` cliquable.
+   - **8 Factory Presets** dans `Source/PluginProcessor.cpp`.
+   - **Sauvegarde directe intégrée (`SavePresetOverlay`)** dans `Source/PluginEditor.h/.cpp` : plus de fenêtre Finder/Windows, les patches `.runaway` sont enregistrés dans `~/Library/Audio/Presets/RunawayAudio/Runaway/` et apparaissent immédiatement dans la section **`USER PRESETS`** du menu déroulant.
+6. **Fonction `cosmos` (tout juste ajoutée)** :
+   - Potard nommé **`cosmos`** (en minuscules) dans Row 2 (`LOOP ENGINE`).
+   - Paramètre APVTS `"cosmos"` (`0–100 %`), mémorisé par mode (`numPerModeParams = 20`, index `10`).
+   - Méthode `WaveshaperEngine::cosmos (int ch, float amount)` : 3 LFO lents désynchronisés Gauche/Droite (`0.043–0.317 Hz`) + marche aléatoire lissée (`cosmosWanderA/B`), modulant le pitch de délai, le `Loop LPF` en asymétrie L/R et la diffusion `Chord`/`FDN`.
 
 ---
 
-## Prochaine Étape (Étape 4 — Mouvement & Modulations Modernes)
-- **Inspirations** : **Elektron Analog Heat** (Envelope Follower), **SOMA Cosmos** (dérive lente), **Make Noise Strega** (sub-harmoniques / bruit de boucle).
-- **Pistes à explorer ensemble** :
-  - **Envelope Follower** assignable (`Drive`, `Character`, `Loop LPF`, `Pitch`).
-  - **Gestionnaire de Presets** complet + visualisation enrichie dans l'UI.
+## 3. Point exact de reprise pour la prochaine session
+
+### Priorité 1 — Rendre `cosmos` beaucoup plus audible et expressif
+- **Constat actuel** : L'utilisateur a testé et **a du mal à entendre la différence** avec `cosmos`.
+- **Pourquoi** : Les modulations actuelles sont très sages (`pitchDrift` max ±2.4 %, cycles très lents de 3 à 23 secondes, `filterDrift` ±0.85 octave), donc sur des boucles courtes ou un feedback modéré l'effet paraît presque imperceptible.
+- **Pistes pour le prochain tour** :
+  - Amplifier nettement la plage musicale de `cosmos` (surtout au-delà de 30–40 % : micro-dérive tape/chorus organique bien perceptible sur le pitch, balayage asymétrique L/R plus large du `Loop LPF`, léger mouvement de gain/saturation ou décalage rythmique/de phase entre L et R, et cycles un peu plus vivants sur le haut du potard).
+  - Éventuellement ajouter un preset dédié ou tester sur `07 NIGHTSKY SHIMMER CLOUD` / `03 SOMA TOTAL CHAOS` pour entendre immédiatement le avant/après.
+
+### Notes utiles conservées
+- **Presets d'usine** : L'utilisateur sait modifier les valeurs dans `factoryPresets` (`Source/PluginProcessor.cpp`), notamment l'index `7` (`feedback`) pour calmer les presets les plus explosifs.
+- **Shimmer (`FDN GLIMMER`)** : Étude annulée pour le moment.
+- **Idées futures en réserve** : *Make Noise Strega* (sub-harmoniques / bruit de boucle BBD).
