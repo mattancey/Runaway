@@ -1,5 +1,3 @@
-// Fichier: Source/PluginProcessor.h
-
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -16,7 +14,7 @@ class RunawayAudioProcessor final : public juce::AudioProcessor,
 public:
     static constexpr int scopeBufferSize = 512;
     static constexpr int numModes = 4;
-    static constexpr int numPerModeParams = 19;
+    static constexpr int numPerModeParams = 20;
     static constexpr int numFactoryPresets = 8;
 
     RunawayAudioProcessor();
@@ -112,6 +110,7 @@ private:
     std::atomic<float>* feedbackParam = nullptr;
     std::atomic<float>* loopCutoffParam = nullptr;
     std::atomic<float>* spreadParam = nullptr;
+    std::atomic<float>* cosmosParam = nullptr;
     std::atomic<float>* polarityParam = nullptr;
     std::atomic<float>* inLoopParam = nullptr;
     std::atomic<float>* midiTrackParam = nullptr;
