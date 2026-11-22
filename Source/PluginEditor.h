@@ -108,12 +108,14 @@ private:
     juce::Slider feedbackSlider;
     juce::Slider loopCutoffSlider;
     juce::Slider spreadSlider;
+    juce::Slider cosmosSlider;
     juce::Slider loopLevelSlider;
 
     juce::Label pitchLabel;
     juce::Label feedbackLabel;
     juce::Label loopCutoffLabel;
     juce::Label spreadLabel;
+    juce::Label cosmosLabel;
     juce::Label loopLevelLabel;
 
     juce::TextButton loopActiveButton;
@@ -149,6 +151,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> feedbackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> spreadAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> cosmosAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopLevelAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envAmountAttachment;
