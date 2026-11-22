@@ -45,6 +45,13 @@ public:
         FilterOnly      // Pure Vactrol resonant lowpass sweep
     };
 
+    struct CosmosMod
+    {
+        float pitchDrift = 0.0f;
+        float filterDrift = 0.0f;
+        float diffuseDrift = 0.0f;
+    };
+
     static constexpr int maxChannels = 2;
     static constexpr int numVoices = 4;
     static constexpr int maxSubBlock = 64;
@@ -137,11 +144,15 @@ public:
         feedbackSmooth.reset (hostSampleRate, smoothSec);
         loopCutoffSmooth.reset (hostSampleRate, smoothSec);
         spreadSmooth.reset (hostSampleRate, smoothSec);
+        cosmosSmooth.reset (hostSampleRate, 0.030);
         polaritySmooth.reset (hostSampleRate, 0.008);
         loopBypassSmooth.reset (hostSampleRate, 0.025);
         inLoopTrimSmooth.reset (hostSampleRate, 0.020);
         envAmountSmooth.reset (hostSampleRate, 0.020);
         lpgResSmooth.reset (hostSampleRate, 0.020);
+
+        cosmosWanderAlpha = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi * 0.28f
+                                             / static_cast<float> (hostSampleRate));
 
         reset();
     }
@@ -172,6 +183,11 @@ public:
             shimmerPhase[ch] = (ch == 0) ? 0.0f : 0.25f;
             dryRing[ch].fill (0.0f);
 
+            cosmosWanderA[ch] = 0.0f;
+            cosmosWanderB[ch] = 0.0f;
+            cosmosWanderTarget[ch] = 0.0f;
+            cosmosWanderHold[ch] = 0;
+
             for (size_t v = 0; v < numVoices; ++v)
             {
                 delayWritePos[ch][v] = 0;
@@ -183,6 +199,11 @@ public:
 
         lfoPhase[0] = 0.0f;
         lfoPhase[1] = 0.37f;
+        cosmosPhase[0] = { 0.0f, 0.31f, 0.67f };
+        cosmosPhase[1] = { 0.43f, 0.79f, 0.17f };
+        cosmosRng[0] = 0x13579bdfu;
+        cosmosRng[1] = 0x2468ace1u;
+
         envState = 0.0f;
         lastEnvelopeOut = 0.0f;
         vactrolFastEnv = 0.0f;
@@ -207,6 +228,7 @@ public:
                         float feedbackNorm,
                         float loopCutoffHz,
                         float spreadNorm,
+                        float cosmosNorm,
                         bool invertPolarity,
                         bool shaperInLoop,
                         int envTargetIndex,
@@ -246,6 +268,7 @@ public:
         feedbackSmooth.setTargetValue (juce::jlimit (0.0f, 0.98f, feedbackNorm));
         loopCutoffSmooth.setTargetValue (juce::jlimit (200.0f, 16000.0f, loopCutoffHz));
         spreadSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, spreadNorm));
+        cosmosSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, cosmosNorm));
         polaritySmooth.setTargetValue (invertPolarity ? -1.0f : 1.0f);
         envAmountSmooth.setTargetValue (juce::jlimit (-1.0f, 1.0f, envAmountSigned));
         envReleaseMsCurrent = juce::jlimit (20.0f, 600.0f, envReleaseMs);
@@ -253,6 +276,55 @@ public:
         lpgResSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, lpgResNorm));
         mixSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, mixNorm));
         wetGainSmooth.setTargetValue (juce::Decibels::decibelsToGain (juce::jlimit (-24.0f, 12.0f, wetLevelDb)));
+    }
+
+    CosmosMod cosmos (int ch, float amount) noexcept
+    {
+        const size_t c = static_cast<size_t> (juce::jlimit (0, maxChannels - 1, ch));
+        const float rate = static_cast<float> (hostSampleRate);
+
+        static constexpr std::array<std::array<float, 3>, maxChannels> freqsHz {{
+            { 0.043f, 0.113f, 0.271f },
+            { 0.059f, 0.149f, 0.317f }
+        }};
+
+        for (size_t k = 0; k < 3; ++k)
+        {
+            cosmosPhase[c][k] += freqsHz[c][k] / rate;
+            if (cosmosPhase[c][k] >= 1.0f)
+                cosmosPhase[c][k] -= 1.0f;
+        }
+
+        if (--cosmosWanderHold[c] <= 0)
+        {
+            cosmosRng[c] ^= cosmosRng[c] << 13;
+            cosmosRng[c] ^= cosmosRng[c] >> 17;
+            cosmosRng[c] ^= cosmosRng[c] << 5;
+
+            const float randNorm = static_cast<float> (cosmosRng[c] & 0x00ffffffu) / 8388608.0f - 1.0f;
+            cosmosWanderTarget[c] = randNorm;
+
+            const int minSamples = std::max (1, static_cast<int> (0.35f * rate));
+            const int jitter = static_cast<int> (static_cast<float> (cosmosRng[c] >> 24) * (0.0025f * rate));
+            cosmosWanderHold[c] = minSamples + jitter;
+        }
+
+        cosmosWanderA[c] += cosmosWanderAlpha * (cosmosWanderTarget[c] - cosmosWanderA[c]);
+        cosmosWanderB[c] += cosmosWanderAlpha * (cosmosWanderA[c] - cosmosWanderB[c]);
+
+        const float twoPi = juce::MathConstants<float>::twoPi;
+        const float s0 = std::sin (cosmosPhase[c][0] * twoPi);
+        const float s1 = std::sin (cosmosPhase[c][1] * twoPi);
+        const float s2 = std::sin (cosmosPhase[c][2] * twoPi);
+        const float wander = juce::jlimit (-1.0f, 1.0f, cosmosWanderB[c] * 1.45f);
+
+        const float curve = amount * (0.35f + 0.65f * amount);
+
+        CosmosMod out;
+        out.pitchDrift = curve * 0.024f * (0.32f * s0 + 0.23f * s1 + 0.15f * s2 + 0.30f * wander);
+        out.filterDrift = curve * (0.45f * s1 - 0.25f * s0 + 0.30f * wander);
+        out.diffuseDrift = curve * (0.40f * s2 + 0.35f * s0 + 0.25f * wander);
+        return out;
     }
 
     void process (juce::AudioBuffer<float>& buffer) noexcept
@@ -299,11 +371,12 @@ public:
             std::array<float, maxSubBlock> spreadSub {};
             std::array<float, maxSubBlock> loopBypassSub {};
             std::array<float, maxSubBlock> inLoopTrimSub {};
-            std::array<float, maxSubBlock> loopA1Sub {};
-            std::array<float, maxSubBlock> loopA2Sub {};
-            std::array<float, maxSubBlock> loopA3Sub {};
-            std::array<float, maxSubBlock> lp6AlphaSub {};
-            std::array<float, maxSubBlock> fdnLpAlphaSub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> loopA1Sub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> loopA2Sub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> loopA3Sub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> lp6AlphaSub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> fdnLpAlphaSub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> cosmosDiffuseSub {};
             std::array<float, maxSubBlock> lpgCvSub {};
             std::array<float, maxSubBlock> lpgResSub {};
             std::array<float, maxSubBlock> mixSub {};
@@ -399,6 +472,7 @@ public:
                 const float fb = feedbackSmooth.getNextValue();
                 const float pol = polaritySmooth.getNextValue();
                 const float spr = spreadSmooth.getNextValue();
+                const float cosmosAmt = cosmosSmooth.getNextValue();
                 const float loopActive = loopBypassSmooth.getNextValue();
                 const float inLoopTrim = inLoopTrimSmooth.getNextValue();
 
@@ -412,548 +486,21 @@ public:
                 lfoPhase[1] += lfoInc1;
                 if (lfoPhase[1] >= 1.0f) lfoPhase[1] -= 1.0f;
 
+                const CosmosMod cosmosL = cosmos (0, cosmosAmt);
+                const CosmosMod cosmosR = (numChannels > 1) ? cosmos (1, cosmosAmt) : cosmosL;
+
+                cosmosDiffuseSub[0][si] = cosmosL.diffuseDrift;
+                cosmosDiffuseSub[1][si] = cosmosR.diffuseDrift;
+
                 const float driftL = std::sin (lfoPhase[0] * juce::MathConstants<float>::twoPi) * (spr * 0.0045f);
                 const float driftR = std::sin (lfoPhase[1] * juce::MathConstants<float>::twoPi) * (spr * 0.0045f);
                 const float detuneRatio = spr * 0.028f;
 
                 const float baseDelay = osRateF / pitchHz;
-                baseDelayLSub[si] = baseDelay * (1.0f - detuneRatio + driftL);
-                baseDelayRSub[si] = baseDelay * (1.0f + detuneRatio + driftR);
-
-                const float clampedFc = juce::jlimit (120.0f, 0.35f * osRateF, loopFc);
-                const float g = std::tan (juce::MathConstants<float>::pi * clampedFc / osRateF);
-                const float k = 1.15f;
-                const float a1 = 1.0f / (1.0f + g * (g + k));
-                loopA1Sub[si] = a1;
-                loopA2Sub[si] = g * a1;
-                loopA3Sub[si] = g * loopA2Sub[si];
-
-                const float bbdClockFc = std::min (0.40f * osRateF, std::min (loopFc * 1.5f, pitchHz * 18.0f + 1200.0f));
-                const float omega6 = 2.0f * juce::MathConstants<float>::pi * bbdClockFc / osRateF;
-                lp6AlphaSub[si] = omega6 / (1.0f + omega6);
-
-                const float omegaFdn = 2.0f * juce::MathConstants<float>::pi * clampedFc / osRateF;
-                fdnLpAlphaSub[si] = omegaFdn / (1.0f + omegaFdn);
-            }
-
-            juce::dsp::AudioBlock<float> fullBlock (buffer);
-            auto subBlock = fullBlock.getSubsetChannelBlock (0, static_cast<size_t> (numChannels))
-                                     .getSubBlock (static_cast<size_t> (sampleOffset),
-                                                   static_cast<size_t> (subLen));
-            auto osBlock = oversampler->processSamplesUp (subBlock);
-
-            const int osNumSamples = static_cast<int> (osBlock.getNumSamples());
-            const int osFactor = std::max (1, osNumSamples / subLen);
-            const float maxDelayF = static_cast<float> (delayLineLength - 6);
-
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                const size_t c = static_cast<size_t> (ch);
-                float* chData = osBlock.getChannelPointer (c);
-
-                for (int osIdx = 0; osIdx < osNumSamples; ++osIdx)
-                {
-                    const size_t hostIdx = static_cast<size_t> (std::min (subLen - 1, osIdx / osFactor));
-                    const float drv = driveSub[hostIdx];
-                    const float chr = charSub[hostIdx];
-                    const float baseDelay = (ch == 0) ? baseDelayLSub[hostIdx] : baseDelayRSub[hostIdx];
-                    const float fbSigned = fbSignedSub[hostIdx];
-                    const float spr = spreadSub[hostIdx];
-                    const float loopActive = loopBypassSub[hostIdx];
-                    const float inLoopTrim = inLoopTrimSub[hostIdx];
-                    const float a1 = loopA1Sub[hostIdx];
-                    const float a2 = loopA2Sub[hostIdx];
-                    const float a3 = loopA3Sub[hostIdx];
-                    const float lp6Alpha = lp6AlphaSub[hostIdx];
-                    const float fdnAlpha = fdnLpAlphaSub[hostIdx];
-
-                    const float xIn = chData[osIdx];
-                    float wetSignal = 0.0f;
-
-                    if (currentLoopEngine == LoopEngine::String)
-                    {
-                        const float delayLen = juce::jlimit (4.0f, maxDelayF, baseDelay);
-                        const float delayedRaw = readDelayCubic (delayBuffers[c][0], delayWritePos[c][0], delayLen);
-
-                        loopLp6State[c] += lp6Alpha * (delayedRaw - loopLp6State[c]);
-
-                        const float v3 = loopLp6State[c] - loopLp12Ic2[c];
-                        const float v1 = a1 * loopLp12Ic1[c] + a2 * v3;
-                        const float v2 = loopLp12Ic2[c] + a2 * loopLp12Ic1[c] + a3 * v3;
-                        loopLp12Ic1[c] = 2.0f * v1 - loopLp12Ic1[c];
-                        loopLp12Ic2[c] = 2.0f * v2 - loopLp12Ic2[c];
-
-                        const float hpOut = v2 - loopHpX1[c] + hpR * loopHpY1[c];
-                        loopHpX1[c] = v2;
-                        loopHpY1[c] = hpOut;
-
-                        const float fbLimited = std::tanh (hpOut * 0.78f) / 0.78f;
-                        const float fbReturn = fbLimited * fbSigned;
-
-                        float loopNode = 0.0f;
-                        if (inLoopRouting)
-                        {
-                            loopNode = applyWaveshaper (ch, xIn + fbReturn, drv, chr);
-                        }
-                        else
-                        {
-                            const float shaped = applyWaveshaper (ch, xIn, drv, chr);
-                            loopNode = shaped + fbReturn;
-                        }
-
-                        delayBuffers[c][0][static_cast<size_t> (delayWritePos[c][0])] = juce::jlimit (-4.0f, 4.0f, loopNode);
-                        delayWritePos[c][0] = (delayWritePos[c][0] + 1) % delayLineLength;
-
-                        wetSignal = loopNode;
-                    }
-                    else if (currentLoopEngine == LoopEngine::Chord)
-                    {
-                        std::array<float, numVoices> voiceOuts {};
-                        float chordSum = 0.0f;
-
-                        const std::array<float, numVoices> voiceWeights {
-                            1.0f,
-                            spr * 0.72f,
-                            spr * 0.58f,
-                            spr * 0.65f
-                        };
-                        const float normSum = voiceWeights[0] + voiceWeights[1] + voiceWeights[2] + voiceWeights[3];
-
-                        for (size_t v = 0; v < numVoices; ++v)
-                        {
-                            const float stereoRatio = (ch == 0) ? (1.0f - 0.008f * static_cast<float> (v) * spr)
-                                                                : (1.0f + 0.008f * static_cast<float> (v) * spr);
-                            const float vDelay = juce::jlimit (4.0f, maxDelayF,
-                                                               (baseDelay / chordPitchRatios[v]) * stereoRatio);
-                            voiceOuts[v] = readDelayCubic (delayBuffers[c][v], delayWritePos[c][v], vDelay);
-                            chordSum += voiceOuts[v] * voiceWeights[v];
-                        }
-
-                        chordSum /= std::max (1.0f, normSum);
-
-                        loopLp6State[c] += lp6Alpha * (chordSum - loopLp6State[c]);
-                        const float v3 = loopLp6State[c] - loopLp12Ic2[c];
-                        const float v1 = a1 * loopLp12Ic1[c] + a2 * v3;
-                        const float v2 = loopLp12Ic2[c] + a2 * loopLp12Ic1[c] + a3 * v3;
-                        loopLp12Ic1[c] = 2.0f * v1 - loopLp12Ic1[c];
-                        loopLp12Ic2[c] = 2.0f * v2 - loopLp12Ic2[c];
-
-                        const float hpOut = v2 - loopHpX1[c] + hpR * loopHpY1[c];
-                        loopHpX1[c] = v2;
-                        loopHpY1[c] = hpOut;
-
-                        const float fbLimited = std::tanh (hpOut * 0.78f) / 0.78f;
-                        const float fbReturn = fbLimited * fbSigned;
-
-                        float excite = 0.0f;
-                        if (inLoopRouting)
-                        {
-                            excite = applyWaveshaper (ch, xIn + fbReturn, drv, chr);
-                        }
-                        else
-                        {
-                            const float shaped = applyWaveshaper (ch, xIn, drv, chr);
-                            excite = shaped + fbReturn;
-                        }
-
-                        for (size_t v = 0; v < numVoices; ++v)
-                        {
-                            const float vFb = std::tanh (voiceOuts[v] * 0.78f) / 0.78f;
-                            const float writeVal = inLoopRouting
-                                ? excite
-                                : (excite * 0.65f + vFb * fbSigned * 0.35f);
-                            delayBuffers[c][v][static_cast<size_t> (delayWritePos[c][v])] = juce::jlimit (-4.0f, 4.0f, writeVal);
-                            delayWritePos[c][v] = (delayWritePos[c][v] + 1) % delayLineLength;
-                        }
-
-                        wetSignal = excite;
-                    }
-                    else
-                    {
-                        std::array<float, numVoices> y {};
-                        const float sizeScale = 2.35f;
-
-                        for (size_t v = 0; v < numVoices; ++v)
-                        {
-                            const float stereoBias = (ch == 0) ? (1.0f - 0.015f * static_cast<float> (v) * spr)
-                                                               : (1.0f + 0.015f * static_cast<float> (v) * spr);
-                            const float vDelay = juce::jlimit (8.0f, maxDelayF,
-                                                               baseDelay * sizeScale * fdnRatios[v] * stereoBias);
-                            const float raw = readDelayCubic (delayBuffers[c][v], delayWritePos[c][v], vDelay);
-
-                            fdnLp6A[c][v] += fdnAlpha * (raw - fdnLp6A[c][v]);
-                            fdnLp6B[c][v] += fdnAlpha * (fdnLp6A[c][v] - fdnLp6B[c][v]);
-                            y[v] = fdnLp6B[c][v];
-                        }
-
-                        const float a0 = y[0] + y[1];
-                        const float a1_h = y[0] - y[1];
-                        const float a2_h = y[2] + y[3];
-                        const float a3_h = y[2] - y[3];
-
-                        std::array<float, numVoices> h {
-                            0.5f * (a0 + a2_h),
-                            0.5f * (a1_h + a3_h),
-                            0.5f * (a0 - a2_h),
-                            0.5f * (a1_h - a3_h)
-                        };
-
-                        shimmerPhase[c] += shimmerInc;
-                        if (shimmerPhase[c] >= 1.0f)
-                            shimmerPhase[c] -= 1.0f;
-
-                        const float p1 = shimmerPhase[c];
-                        float p2 = p1 + 0.5f;
-                        if (p2 >= 1.0f) p2 -= 1.0f;
-
-                        const float wF = static_cast<float> (shimmerWindowSize);
-                        const float shimD1 = juce::jlimit (8.0f, maxDelayF, 16.0f + (1.0f - p1) * wF);
-                        const float shimD2 = juce::jlimit (8.0f, maxDelayF, 16.0f + (1.0f - p2) * wF);
-
-                        const float s1 = readDelayCubic (delayBuffers[c][0], delayWritePos[c][0], shimD1);
-                        const float s2 = readDelayCubic (delayBuffers[c][0], delayWritePos[c][0], shimD2);
-                        const float w1 = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * p1);
-                        const float w2 = 1.0f - w1;
-                        const float shimmerSig = (s1 * w1 + s2 * w2) * (spr * 0.34f);
-
-                        const float fdnSum = 0.5f * (h[0] + h[1] + h[2] + h[3]);
-                        const float hpOut = fdnSum - loopHpX1[c] + hpR * loopHpY1[c];
-                        loopHpX1[c] = fdnSum;
-                        loopHpY1[c] = hpOut;
-
-                        const float fbLimited = std::tanh (hpOut * 0.78f) / 0.78f;
-                        const float fbReturn = fbLimited * fbSigned;
-
-                        float excite = 0.0f;
-                        if (inLoopRouting)
-                            excite = applyWaveshaper (ch, xIn + fbReturn, drv, chr);
-                        else
-                            excite = applyWaveshaper (ch, xIn, drv, chr);
-
-                        const float fdnFbGain = fbSigned * 0.94f;
-                        for (size_t v = 0; v < numVoices; ++v)
-                        {
-                            const float shimTap = (v == 1 || v == 2) ? shimmerSig * fbSigned : 0.0f;
-                            const float tankFeed = inLoopRouting
-                                ? (excite * 0.5f + std::tanh (h[v] * 0.75f) * fdnFbGain * 0.65f + shimTap)
-                                : (excite * 0.5f + std::tanh (h[v] * 0.75f) * fdnFbGain + shimTap);
-
-                            delayBuffers[c][v][static_cast<size_t> (delayWritePos[c][v])] = juce::jlimit (-4.0f, 4.0f, tankFeed);
-                            delayWritePos[c][v] = (delayWritePos[c][v] + 1) % delayLineLength;
-                        }
-
-                        wetSignal = inLoopRouting ? excite : (excite + fbReturn * loopActive);
-                    }
-
-                    wetSignal *= inLoopTrim;
-
-                    const float dcR = 0.9992f;
-                    const float dcY = wetSignal - dcPrevX[c] + dcR * dcPrevY[c];
-                    dcPrevX[c] = wetSignal;
-                    dcPrevY[c] = dcY;
-
-                    chData[osIdx] = dcY;
-                }
-            }
-
-            oversampler->processSamplesDown (subBlock);
-
-            // Apply Buchla 292 Vactrol LPG on Wet path, then Wet Level & Dry/Wet Mix
-            for (int i = 0; i < subLen; ++i)
-            {
-                const size_t si = static_cast<size_t> (i);
-                const int sIdx = sampleOffset + i;
-                const float mix = mixSub[si];
-                const float wetGain = wetGainSub[si];
-                const float cv = lpgCvSub[si];
-                const float res = lpgResSub[si];
-
-                const float cvCurve = cv * (0.30f + 0.70f * cv);
-                const float lpgFc = juce::jlimit (100.0f, 0.43f * hostRateF, 110.0f + cvCurve * 15500.0f);
-                const float lpgG = std::tan (juce::MathConstants<float>::pi * lpgFc / hostRateF);
-                const float lpgK = 1.414f - res * 1.05f;
-                const float lpgA1 = 1.0f / (1.0f + lpgG * (lpgG + lpgK));
-                const float lpgA2 = lpgG * lpgA1;
-                const float lpgA3 = lpgG * lpgA2;
-                const float vcaGain = cv * (0.40f + 0.60f * cv);
-
-                const int readIdx = (dryWritePos - subLen + i - latencySamples + dryDelayBufferSize * 2)
-                                    % dryDelayBufferSize;
+                baseDelayLSub[si] = baseDelay * (1.0f - detuneRatio + driftL + cosmosL.pitchDrift);
+                baseDelayRSub[si] = baseDelay * (1.0f + detuneRatio + driftR + cosmosR.pitchDrift);
 
                 for (int ch = 0; ch < numChannels; ++ch)
                 {
                     const size_t c = static_cast<size_t> (ch);
-                    const float dry = dryRing[c][static_cast<size_t> (readIdx)];
-                    float wet = buffer.getSample (ch, sIdx);
-
-                    // Run 12dB TPT LPG filter continuously when LPG != Off to keep filter state warm
-                    if (currentLpgMode != LpgMode::Off)
-                    {
-                        const float v3 = wet - lpgIc2[c];
-                        const float v1 = lpgA1 * lpgIc1[c] + lpgA2 * v3;
-                        const float v2 = lpgIc2[c] + lpgA2 * lpgIc1[c] + lpgA3 * v3;
-                        lpgIc1[c] = 2.0f * v1 - lpgIc1[c];
-                        lpgIc2[c] = 2.0f * v2 - lpgIc2[c];
-
-                        if (currentLpgMode == LpgMode::Both)
-                            wet = v2 * vcaGain;
-                        else if (currentLpgMode == LpgMode::VcaOnly)
-                            wet = wet * vcaGain;
-                        else
-                            wet = v2;
-                    }
-
-                    wet *= wetGain;
-
-                    if (std::abs (wet) > 1.0f)
-                        wet = std::tanh (wet * 0.85f) / 0.85f;
-
-                    const float out = dry * (1.0f - mix) + wet * mix;
-                    buffer.setSample (ch, sIdx, out);
-                }
-            }
-
-            sampleOffset += subLen;
-        }
-    }
-
-private:
-    float readDelayCubic (const std::vector<float>& buf, int writePos, float delaySamples) const noexcept
-    {
-        float readPos = static_cast<float> (writePos) - delaySamples;
-        const float lenF = static_cast<float> (delayLineLength);
-        while (readPos < 0.0f)
-            readPos += lenF;
-        while (readPos >= lenF)
-            readPos -= lenF;
-
-        const int i1 = static_cast<int> (readPos);
-        const float frac = readPos - static_cast<float> (i1);
-
-        const int i0 = (i1 - 1 + delayLineLength) % delayLineLength;
-        const int i2 = (i1 + 1) % delayLineLength;
-        const int i3 = (i1 + 2) % delayLineLength;
-
-        const float y0 = buf[static_cast<size_t> (i0)];
-        const float y1 = buf[static_cast<size_t> (i1)];
-        const float y2 = buf[static_cast<size_t> (i2)];
-        const float y3 = buf[static_cast<size_t> (i3)];
-
-        const float c0 = y1;
-        const float c1 = 0.5f * (y2 - y0);
-        const float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
-        const float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
-
-        return ((c3 * frac + c2) * frac + c1) * frac + c0;
-    }
-
-    float applyWaveshaper (int ch, float x, float drv, float chr) noexcept
-    {
-        switch (currentMode)
-        {
-            case Mode::BuchlaSoma:  return processBuchlaSoma (ch, x, drv, chr);
-            case Mode::BifoldMorph: return processBifoldMorph (ch, x, drv, chr);
-            case Mode::EricaXeno:   return processEricaXeno (ch, x, drv, chr);
-            case Mode::Werner112dB: return processWerner112dB (ch, x, drv, chr);
-        }
-        return x;
-    }
-
-    static float tanhF1 (float x) noexcept
-    {
-        const float ax = std::abs (x);
-        return ax + std::log1p (std::exp (-2.0f * ax)) - 0.69314718056f;
-    }
-
-    float processADAATanh (int ch, float x) noexcept
-    {
-        const size_t c = static_cast<size_t> (ch);
-        const float xPrev = adaaPrevX[c];
-        adaaPrevX[c] = x;
-
-        const float diff = x - xPrev;
-        if (std::abs (diff) < 1.0e-4f)
-            return std::tanh (0.5f * (x + xPrev));
-
-        return (tanhF1 (x) - tanhF1 (xPrev)) / diff;
-    }
-
-    static float buchla259ParallelFold (float x) noexcept
-    {
-        static constexpr std::array<float, 5> thresholds { 0.35f, 0.72f, 1.12f, 1.58f, 2.15f };
-        static constexpr std::array<float, 5> weights    { 0.90f, -0.78f, 0.68f, -0.58f, 0.48f };
-
-        float sum = std::tanh (x * 0.95f);
-
-        for (size_t i = 0; i < thresholds.size(); ++i)
-        {
-            const float t = thresholds[i];
-            const float ax = std::abs (x);
-            if (ax > t)
-            {
-                const float excess = ax - t;
-                const float fold = std::copysign (excess * std::tanh (excess * 1.8f), x);
-                sum += weights[i] * fold;
-            }
-        }
-
-        return std::tanh (sum * 0.65f);
-    }
-
-    static float sergeSerialFold (float x, float stagesDrive) noexcept
-    {
-        const float g = 1.0f + stagesDrive * 4.5f;
-        const float s1 = std::sin (x * g);
-        const float s2 = std::sin (s1 * 2.35f + x * 0.45f);
-        return std::tanh (0.72f * s2 + 0.28f * s1);
-    }
-
-    float processBuchlaSoma (int ch, float x, float drive, float spoil) noexcept
-    {
-        const float thr = spoil * 0.28f;
-        const float mag = std::abs (x);
-        const float gate = (thr > 1.0e-5f) ? (mag * mag) / (mag * mag + thr * thr) : 1.0f;
-
-        const float preGain = 1.0f + drive * 8.5f;
-        const float bias = spoil * 0.32f;
-        const float driven = (x * gate) * preGain + bias;
-
-        const float folded = buchla259ParallelFold (driven);
-        return 0.85f * folded + 0.15f * processADAATanh (ch, folded * 1.4f);
-    }
-
-    float processBifoldMorph (int ch, float x, float drive, float morph) noexcept
-    {
-        juce::ignoreUnused (ch);
-        const float preGain = 1.0f + drive * 7.5f;
-        const float driven = x * preGain;
-
-        const float buchlaOut = buchla259ParallelFold (driven);
-        const float sergeOut = sergeSerialFold (x, drive);
-
-        const float gB = std::cos (morph * juce::MathConstants<float>::halfPi);
-        const float gS = std::sin (morph * juce::MathConstants<float>::halfPi);
-
-        return (gB * buchlaOut + gS * sergeOut) * 0.95f;
-    }
-
-    float processEricaXeno (int ch, float x, float drive, float scream) noexcept
-    {
-        const size_t c = static_cast<size_t> (ch);
-        const float gain = 1.0f + drive * 15.0f;
-        const float germBias = 0.08f + scream * 0.35f;
-        const float driven = x * gain + germBias;
-
-        const float clipped = processADAATanh (ch, driven);
-
-        const float fc = 650.0f + scream * 2400.0f;
-        const float g = std::tan (juce::MathConstants<float>::pi * std::min (fc, 0.35f * static_cast<float> (oversampledRate))
-                                  / static_cast<float> (oversampledRate));
-        const float k = 1.0f / (1.0f + scream * 3.8f);
-        const float a1 = 1.0f / (1.0f + g * (g + k));
-        const float a2 = g * a1;
-        const float a3 = g * a2;
-
-        const float sV3 = clipped - screamIc2[c];
-        const float sV1 = a1 * screamIc1[c] + a2 * sV3;
-        const float sV2 = screamIc2[c] + a2 * screamIc1[c] + a3 * sV3;
-        screamIc1[c] = 2.0f * sV1 - screamIc1[c];
-        screamIc2[c] = 2.0f * sV2 - screamIc2[c];
-
-        const float band = k * sV1;
-        return std::tanh ((clipped + band * (0.3f + scream * 1.4f)) * 0.85f);
-    }
-
-    float processWerner112dB (int ch, float x, float drive, float resonanceNorm) noexcept
-    {
-        const size_t c = static_cast<size_t> (ch);
-        const float inputGain = 1.0f + drive * 6.5f;
-        const float inDriven = x * inputGain;
-
-        const float fc = 280.0f + (1.0f - drive * 0.35f) * 3200.0f + resonanceNorm * 2200.0f;
-        const float clampedFc = juce::jlimit (60.0f, 0.38f * static_cast<float> (oversampledRate), fc);
-        const float g = std::tan (juce::MathConstants<float>::pi * clampedFc / static_cast<float> (oversampledRate));
-
-        const float k = juce::jlimit (0.14f, 1.4f, 1.4f - resonanceNorm * 1.26f);
-
-        const float denom = 1.0f + g * (g + k);
-        const float hp = (inDriven - (k + g) * svfIc1[c] - svfIc2[c]) / denom;
-
-        const float v1 = std::tanh (g * hp);
-        const float bp = std::tanh (svfIc1[c] + v1);
-        svfIc1[c] = std::tanh (bp + v1);
-
-        const float v2 = std::tanh (g * bp);
-        const float lp = std::tanh (svfIc2[c] + v2);
-        svfIc2[c] = std::tanh (lp + v2);
-
-        return (lp * 0.88f + bp * (0.12f + resonanceNorm * 0.2f));
-    }
-
-    double hostSampleRate = 44100.0;
-    double oversampledRate = 176400.0;
-    int activeChannels = 2;
-    int latencySamples = 0;
-    int delayLineLength = 0;
-
-    Mode currentMode = Mode::BuchlaSoma;
-    LoopEngine currentLoopEngine = LoopEngine::String;
-    EnvTarget currentEnvTarget = EnvTarget::Off;
-    LpgMode currentLpgMode = LpgMode::Off;
-    bool inLoopRouting = false;
-
-    float envReleaseMsCurrent = 140.0f;
-    float envState = 0.0f;
-    float lastEnvelopeOut = 0.0f;
-
-    float lpgDecayMsCurrent = 280.0f;
-    float vactrolFastEnv = 0.0f;
-    float vactrolSlowEnv = 0.0f;
-    float lastVactrolLevel = 0.0f;
-    uint32_t lastMidiStrikeCounter = 0;
-
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
-    juce::dsp::StateVariableTPTFilter<float> preFilter;
-
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> preCutoffSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> driveSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> characterSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> pitchHzSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> feedbackSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> loopCutoffSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> spreadSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> polaritySmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> loopBypassSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> inLoopTrimSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> envAmountSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> lpgResSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> mixSmooth;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wetGainSmooth;
-
-    std::array<float, maxChannels> adaaPrevX {};
-    std::array<float, maxChannels> dcPrevX {};
-    std::array<float, maxChannels> dcPrevY {};
-    std::array<float, maxChannels> svfIc1 {};
-    std::array<float, maxChannels> svfIc2 {};
-    std::array<float, maxChannels> screamIc1 {};
-    std::array<float, maxChannels> screamIc2 {};
-
-    std::array<float, maxChannels> loopLp12Ic1 {};
-    std::array<float, maxChannels> loopLp12Ic2 {};
-    std::array<float, maxChannels> loopLp6State {};
-    std::array<float, maxChannels> loopHpX1 {};
-    std::array<float, maxChannels> loopHpY1 {};
-    std::array<float, maxChannels> lpgIc1 {};
-    std::array<float, maxChannels> lpgIc2 {};
-    std::array<float, maxChannels> lfoPhase {};
-    std::array<float, maxChannels> shimmerPhase {};
-
-    std::array<std::array<float, numVoices>, maxChannels> fdnLp6A {};
-    std::array<std::array<float, numVoices>, maxChannels> fdnLp6B {};
-    std::array<std::array<std::vector<float>, numVoices>, maxChannels> delayBuffers {};
-    std::array<std::array<int, numVoices>, maxChannels> delayWritePos {};
-
-    std::array<std::array<float, dryDelayBufferSize>, maxChannels> dryRing {};
-    int dryWritePos = 0;
-};
-} // namespace runaway::dsp
+                    const float f
