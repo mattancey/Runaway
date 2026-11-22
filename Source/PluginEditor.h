@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include <array>
+#include <functional>
 #include <memory>
 
 class RunawayLookAndFeel final : public juce::LookAndFeel_V4
@@ -27,6 +28,33 @@ public:
 
 private:
     juce::Colour accent { 0xffff7a2f };
+};
+
+class SavePresetOverlay final : public juce::Component
+{
+public:
+    SavePresetOverlay();
+
+    void open (const juce::String& initialName,
+               juce::Colour accentColour,
+               std::function<void (const juce::String&)> onConfirmCallback);
+    void close();
+
+    void paint (juce::Graphics& g) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent& event) override;
+
+private:
+    void submit();
+
+    juce::Colour accent { 0xffff7a2f };
+    juce::Rectangle<int> cardBounds;
+    juce::TextEditor nameEditor;
+    juce::TextButton confirmButton { "SAVE" };
+    juce::TextButton cancelButton { "CANCEL" };
+    std::function<void (const juce::String&)> onConfirm;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SavePresetOverlay)
 };
 
 class RunawayAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -103,6 +131,8 @@ private:
     juce::Label lpgDecayLabel;
     juce::Label lpgResLabel;
 
+    SavePresetOverlay saveOverlay;
+
     // Attachments declared AFTER UI components so they detach safely before destruction
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> loopEngineAttachment;
@@ -133,7 +163,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> loopModeAttachment;
 
     juce::Array<juce::File> userPresetFiles;
-    std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::Rectangle<int> scopeBounds;
     juce::Rectangle<int> row2Bounds;
