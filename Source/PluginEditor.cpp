@@ -294,6 +294,7 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     configureKnob (feedbackSlider, feedbackLabel, "FEEDBACK");
     configureKnob (loopCutoffSlider, loopCutoffLabel, "LOOP LPF");
     configureKnob (spreadSlider, spreadLabel, "BBD SPREAD");
+    configureKnob (cosmosSlider, cosmosLabel, "cosmos");
     configureKnob (loopLevelSlider, loopLevelLabel, "IN-LOOP LVL");
 
     configureKnob (envAmountSlider, envAmountLabel, "ENV AMOUNT");
@@ -322,6 +323,7 @@ RunawayAudioProcessorEditor::RunawayAudioProcessorEditor (RunawayAudioProcessor&
     feedbackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "feedback", feedbackSlider);
     loopCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "loopCutoff", loopCutoffSlider);
     spreadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "spread", spreadSlider);
+    cosmosAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "cosmos", cosmosSlider);
     loopLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "loopLevel", loopLevelSlider);
 
     envAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, "envAmount", envAmountSlider);
@@ -494,6 +496,8 @@ void RunawayAudioProcessorEditor::updateButtonLabels()
     feedbackSlider.setAlpha (loopDim);
     loopCutoffSlider.setAlpha (loopDim);
     spreadSlider.setAlpha (loopDim);
+    cosmosSlider.setAlpha (loopDim);
+    cosmosLabel.setAlpha (loopDim);
 
     const float inLoopDim = (loopOn && inLoopOn) ? 1.0f : 0.38f;
     loopLevelSlider.setAlpha (inLoopDim);
@@ -858,6 +862,11 @@ void RunawayAudioProcessorEditor::resized()
 
     innerRow2.removeFromTop (8);
 
+    auto toggleCol = innerRow2.removeFromRight (124).reduced (4, 12);
+    polarityButton.setBounds (toggleCol.removeFromTop (36));
+    toggleCol.removeFromTop (10);
+    loopModeButton.setBounds (toggleCol.removeFromTop (36));
+
     const int col2W = innerRow2.getWidth() / 6;
     auto placeKnob2 = [&] (int index, juce::Slider& s, juce::Label& l)
     {
@@ -870,12 +879,8 @@ void RunawayAudioProcessorEditor::resized()
     placeKnob2 (1, feedbackSlider, feedbackLabel);
     placeKnob2 (2, loopCutoffSlider, loopCutoffLabel);
     placeKnob2 (3, spreadSlider, spreadLabel);
-    placeKnob2 (4, loopLevelSlider, loopLevelLabel);
-
-    auto toggleCol = innerRow2.withX (innerRow2.getX() + 5 * col2W).withWidth (col2W).reduced (4, 12);
-    polarityButton.setBounds (toggleCol.removeFromTop (36));
-    toggleCol.removeFromTop (10);
-    loopModeButton.setBounds (toggleCol.removeFromTop (36));
+    placeKnob2 (4, cosmosSlider, cosmosLabel);
+    placeKnob2 (5, loopLevelSlider, loopLevelLabel);
 
     area.removeFromTop (10);
 
