@@ -50,6 +50,8 @@ public:
         float pitchDrift = 0.0f;
         float filterDrift = 0.0f;
         float diffuseDrift = 0.0f;
+        float driveDrift = 0.0f;
+        float charDrift = 0.0f;
     };
 
     static constexpr int maxChannels = 2;
@@ -151,7 +153,7 @@ public:
         envAmountSmooth.reset (hostSampleRate, 0.020);
         lpgResSmooth.reset (hostSampleRate, 0.020);
 
-        cosmosWanderAlpha = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi * 0.28f
+        cosmosWanderAlpha = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi * 0.75f
                                              / static_cast<float> (hostSampleRate));
 
         reset();
@@ -282,10 +284,11 @@ public:
     {
         const size_t c = static_cast<size_t> (juce::jlimit (0, maxChannels - 1, ch));
         const float rate = static_cast<float> (hostSampleRate);
+        const float clampedAmt = juce::jlimit (0.0f, 1.0f, amount);
 
         static constexpr std::array<std::array<float, 3>, maxChannels> freqsHz {{
-            { 0.043f, 0.113f, 0.271f },
-            { 0.059f, 0.149f, 0.317f }
+            { 0.067f, 0.233f, 0.617f },
+            { 0.089f, 0.293f, 0.739f }
         }};
 
         for (size_t k = 0; k < 3; ++k)
@@ -304,8 +307,8 @@ public:
             const float randNorm = static_cast<float> (cosmosRng[c] & 0x00ffffffu) / 8388608.0f - 1.0f;
             cosmosWanderTarget[c] = randNorm;
 
-            const int minSamples = std::max (1, static_cast<int> (0.35f * rate));
-            const int jitter = static_cast<int> (static_cast<float> (cosmosRng[c] >> 24) * (0.0025f * rate));
+            const int minSamples = std::max (1, static_cast<int> (0.18f * rate));
+            const int jitter = static_cast<int> (static_cast<float> (cosmosRng[c] >> 24) * (0.0011f * rate));
             cosmosWanderHold[c] = minSamples + jitter;
         }
 
@@ -316,14 +319,16 @@ public:
         const float s0 = std::sin (cosmosPhase[c][0] * twoPi);
         const float s1 = std::sin (cosmosPhase[c][1] * twoPi);
         const float s2 = std::sin (cosmosPhase[c][2] * twoPi);
-        const float wander = juce::jlimit (-1.0f, 1.0f, cosmosWanderB[c] * 1.45f);
+        const float wander = juce::jlimit (-1.0f, 1.0f, cosmosWanderB[c] * 1.65f);
 
-        const float curve = amount * (0.35f + 0.65f * amount);
+        const float curve = std::sqrt (clampedAmt) * 0.45f + clampedAmt * 0.55f;
 
         CosmosMod out;
-        out.pitchDrift = curve * 0.024f * (0.32f * s0 + 0.23f * s1 + 0.15f * s2 + 0.30f * wander);
-        out.filterDrift = curve * (0.45f * s1 - 0.25f * s0 + 0.30f * wander);
-        out.diffuseDrift = curve * (0.40f * s2 + 0.35f * s0 + 0.25f * wander);
+        out.pitchDrift = curve * 0.062f * (0.28f * s0 + 0.26f * s1 + 0.16f * s2 + 0.30f * wander);
+        out.filterDrift = curve * 1.85f * (0.40f * s1 - 0.25f * s0 + 0.35f * wander);
+        out.diffuseDrift = curve * (0.35f * s2 + 0.35f * s0 + 0.30f * wander);
+        out.driveDrift = curve * 0.14f * (0.50f * s0 - 0.25f * s2 + 0.25f * wander);
+        out.charDrift = curve * 0.22f * (0.45f * s1 + 0.25f * s2 + 0.30f * wander);
         return out;
     }
 
@@ -363,12 +368,13 @@ public:
         {
             const int subLen = std::min (maxSubBlock, numSamples - sampleOffset);
 
-            std::array<float, maxSubBlock> driveSub {};
-            std::array<float, maxSubBlock> charSub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> driveSub {};
+            std::array<std::array<float, maxSubBlock>, maxChannels> charSub {};
             std::array<float, maxSubBlock> baseDelayLSub {};
             std::array<float, maxSubBlock> baseDelayRSub {};
             std::array<float, maxSubBlock> fbSignedSub {};
             std::array<float, maxSubBlock> spreadSub {};
+            std::array<float, maxSubBlock> cosmosAmtSub {};
             std::array<float, maxSubBlock> loopBypassSub {};
             std::array<float, maxSubBlock> inLoopTrimSub {};
             std::array<std::array<float, maxSubBlock>, maxChannels> loopA1Sub {};
@@ -464,8 +470,6 @@ public:
                         break;
                 }
 
-                driveSub[si] = drv;
-                charSub[si] = chr;
                 mixSub[si] = mixSmooth.getNextValue();
                 wetGainSub[si] = wetGainSmooth.getNextValue();
 
@@ -480,6 +484,7 @@ public:
                 inLoopTrimSub[si] = inLoopTrim;
                 fbSignedSub[si] = fb * pol * loopActive;
                 spreadSub[si] = spr;
+                cosmosAmtSub[si] = (std::sqrt (cosmosAmt) * 0.45f + cosmosAmt * 0.55f) * loopActive;
 
                 lfoPhase[0] += lfoInc0;
                 if (lfoPhase[0] >= 1.0f) lfoPhase[0] -= 1.0f;
@@ -503,8 +508,12 @@ public:
                 for (int ch = 0; ch < numChannels; ++ch)
                 {
                     const size_t c = static_cast<size_t> (ch);
-                    const float fDrift = (ch == 0) ? cosmosL.filterDrift : cosmosR.filterDrift;
-                    const float chLoopFc = loopFc * std::exp2 (fDrift * 0.85f);
+                    const CosmosMod& cm = (ch == 0) ? cosmosL : cosmosR;
+
+                    driveSub[c][si] = juce::jlimit (0.0f, 1.0f, drv + cm.driveDrift * loopActive);
+                    charSub[c][si] = juce::jlimit (0.0f, 1.0f, chr + cm.charDrift * loopActive);
+
+                    const float chLoopFc = loopFc * std::exp2 (cm.filterDrift);
                     const float clampedFc = juce::jlimit (120.0f, 0.35f * osRateF, chLoopFc);
 
                     const float g = std::tan (juce::MathConstants<float>::pi * clampedFc / osRateF);
@@ -542,11 +551,12 @@ public:
                 for (int osIdx = 0; osIdx < osNumSamples; ++osIdx)
                 {
                     const size_t hostIdx = static_cast<size_t> (std::min (subLen - 1, osIdx / osFactor));
-                    const float drv = driveSub[hostIdx];
-                    const float chr = charSub[hostIdx];
+                    const float drv = driveSub[c][hostIdx];
+                    const float chr = charSub[c][hostIdx];
                     const float baseDelay = (ch == 0) ? baseDelayLSub[hostIdx] : baseDelayRSub[hostIdx];
                     const float fbSigned = fbSignedSub[hostIdx];
                     const float spr = spreadSub[hostIdx];
+                    const float cAmt = cosmosAmtSub[hostIdx];
                     const float loopActive = loopBypassSub[hostIdx];
                     const float inLoopTrim = inLoopTrimSub[hostIdx];
                     const float a1 = loopA1Sub[c][hostIdx];
@@ -564,7 +574,18 @@ public:
                         const float delayLen = juce::jlimit (4.0f, maxDelayF, baseDelay);
                         const float delayedRaw = readDelayCubic (delayBuffers[c][0], delayWritePos[c][0], delayLen);
 
-                        loopLp6State[c] += lp6Alpha * (delayedRaw - loopLp6State[c]);
+                        float tapSignal = delayedRaw;
+                        if (cAmt > 0.001f)
+                        {
+                            const float ghostRatio = (ch == 0) ? 1.618034f : 1.414214f;
+                            const float ghostLen = juce::jlimit (4.0f, maxDelayF,
+                                                                 delayLen * (ghostRatio + 0.28f * cDiff));
+                            const float ghostRaw = readDelayCubic (delayBuffers[c][0], delayWritePos[c][0], ghostLen);
+                            const float ghostBlend = 0.38f * cAmt;
+                            tapSignal = delayedRaw * (1.0f - ghostBlend) + ghostRaw * ghostBlend;
+                        }
+
+                        loopLp6State[c] += lp6Alpha * (tapSignal - loopLp6State[c]);
 
                         const float v3 = loopLp6State[c] - loopLp12Ic2[c];
                         const float v1 = a1 * loopLp12Ic1[c] + a2 * v3;
@@ -612,7 +633,7 @@ public:
                         {
                             const float stereoRatio = (ch == 0) ? (1.0f - 0.008f * static_cast<float> (v) * spr)
                                                                 : (1.0f + 0.008f * static_cast<float> (v) * spr);
-                            const float cosmosVoiceDrift = 1.0f + (static_cast<float> (v) - 1.5f) * 0.009f * cDiff;
+                            const float cosmosVoiceDrift = 1.0f + (static_cast<float> (v) - 1.5f) * 0.028f * cDiff;
                             const float vDelay = juce::jlimit (4.0f, maxDelayF,
                                                                (baseDelay / chordPitchRatios[v]) * stereoRatio * cosmosVoiceDrift);
                             voiceOuts[v] = readDelayCubic (delayBuffers[c][v], delayWritePos[c][v], vDelay);
@@ -667,7 +688,7 @@ public:
                         {
                             const float stereoBias = (ch == 0) ? (1.0f - 0.015f * static_cast<float> (v) * spr)
                                                                : (1.0f + 0.015f * static_cast<float> (v) * spr);
-                            const float cosmosTankDrift = 1.0f + ((v & 1u) != 0u ? 1.0f : -1.0f) * 0.018f * cDiff;
+                            const float cosmosTankDrift = 1.0f + ((v & 1u) != 0u ? 1.0f : -1.0f) * 0.055f * cDiff;
                             const float vDelay = juce::jlimit (8.0f, maxDelayF,
                                                                baseDelay * sizeScale * fdnRatios[v] * stereoBias * cosmosTankDrift);
                             const float raw = readDelayCubic (delayBuffers[c][v], delayWritePos[c][v], vDelay);
@@ -705,7 +726,8 @@ public:
                         const float s2 = readDelayCubic (delayBuffers[c][0], delayWritePos[c][0], shimD2);
                         const float w1 = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * p1);
                         const float w2 = 1.0f - w1;
-                        const float shimmerSig = (s1 * w1 + s2 * w2) * (spr * 0.34f);
+                        const float shimGain = spr * (0.34f + 0.22f * cAmt * (0.5f + 0.5f * cDiff));
+                        const float shimmerSig = (s1 * w1 + s2 * w2) * shimGain;
 
                         const float fdnSum = 0.5f * (h[0] + h[1] + h[2] + h[3]);
                         const float hpOut = fdnSum - loopHpX1[c] + hpR * loopHpY1[c];
@@ -1002,7 +1024,7 @@ private:
     float vactrolSlowEnv = 0.0f;
     float lastVactrolLevel = 0.0f;
     uint32_t lastMidiStrikeCounter = 0;
-    float cosmosWanderAlpha = 0.00004f;
+    float cosmosWanderAlpha = 0.0001f;
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     juce::dsp::StateVariableTPTFilter<float> preFilter;
